@@ -164,7 +164,7 @@ else {
                 -AccountPassword (ConvertTo-SecureString $Password -AsPlainText -Force) `
                 -ChangePasswordAtLogon $ChangePassAtLogon `
                 -Enabled $True `
-                -HomeDrive "z" `
+                -HomeDrive "u" `
                 -HomeDirectory "\\$Domaine\users$\%username%"
             Write-Host "Nouvel utilisateur : $Nom $Prenom : $Login / $Password ($Fonction)"
         }
