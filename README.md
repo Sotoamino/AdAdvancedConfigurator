@@ -20,7 +20,7 @@ Téléchargez le script fourni dans un emplacement accessible sur votre système
 
 - Ouvrez PowerShell en tant qu'administrateur.
 - Naviguez jusqu'à l'emplacement où le script est téléchargé en utilisant la commande `cd` (Change Directory).
-- Exécutez le script en utilisant la commande `.\NomDuScript.ps1`. (Assurez-vous de remplacer "NomDuScript" par le nom réel du script)
+- Exécutez le script en utilisant la commande `.\main.ps1`. (Assurez-vous de remplacer "NomDuScript" par le nom réel du script)
 
 ### 3. Suivez les instructions
 
