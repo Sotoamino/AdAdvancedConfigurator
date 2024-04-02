@@ -163,7 +163,9 @@ else {
                 -Path $RealAdOu `
                 -AccountPassword (ConvertTo-SecureString $Password -AsPlainText -Force) `
                 -ChangePasswordAtLogon $ChangePassAtLogon `
-                -Enabled $True
+                -Enabled $True `
+                -HomeDrive "z" `
+                -HomeDirectory "\\$Domaine\users$\%username%"
             Write-Host "Nouvel utilisateur : $Nom $Prenom : $Login / $Password ($Fonction)"
         }
         catch {
