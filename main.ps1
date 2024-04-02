@@ -113,7 +113,6 @@ else {
         $AdOu = Get-ADOrganizationalUnit -Filter 'Name -eq "Utilisateurs"'
     }
     write-host $adOu
-    stop
     Add-Type -AssemblyName System.Web
     Clear-Content "C:\Export.txt"
     Clear-Content "C:\useradd-logs.txt"
@@ -141,16 +140,14 @@ else {
             $Nom = $Nom + "-" + $($suffixe - 1)
         }
         $Mail = $Login + "@" + $Domaine
-        # Création d'une OU si nécessaire
-
-        $RealAdOu = Get-ADOrganizationalUnit -Filter 'Name -eq "' + $Fonction + '"'
-        $createOU = $false
-        if ( $adOu -eq $null) {
-            New-ADOrganizationalUnit -Name + $Fonction + -ProtectedFromAccidentalDeletion $False -Path $adOu
-            write-host "Unité d'organisation "+ $Fonction + " créé."
-            $AdOu = Get-ADOrganizationalUnit -Filter 'Name -eq "' + $Fonction + '"'           
+        $RealAdOu = Get-ADOrganizationalUnit -Filter 'Name -eq $Fonction'
+        if ( $RealAdOu -eq $null) {
+            New-ADOrganizationalUnit -Name $Fonction -ProtectedFromAccidentalDeletion $False -Path $adOu
+            write-host "Unité d'organisation $Fonction créé."
+            $RealAdOu = Get-ADOrganizationalUnit -Filter 'Name -eq $Fonction'
+                       
         }
-
+        Write-Host " AD OU FINAL : $RealAdOu"
 
         try {
             $Error.clear()
@@ -186,20 +183,29 @@ else {
             Add-Content -Path "C:\useradd-logs.txt" -Value " "
         }
         if ( -not $Error) {
-            if ($NoRW -contains $Fonction) {
+                write-host "Recherche de groupe"
+                write-host $Fonction
+                try {
                 $group = Get-ADGroup -Identity $Fonction
+                } catch {$group = $null}
                 if ($group -eq $null) {
                     $Fonction = $Fonction + "_RW"
                     write-warning "Aucun groupe trouvé. recherche d'un groupe $Fonction"
-                    $group = Get-ADGroup -Identity $Fonction
+                    try {
+                        $group = Get-ADGroup -Identity $Fonction
+                    } catch {$group = $null}
                 }
                 if ($group -eq $null) {
                     $Fonction = $Utilisateur.Fonction + "_RO"
-                    write-warning "Aucun groupe trouvÃ©. recherche d'un groupe $Fonction"
-                } if ($group -eq $null) {
+                    write-warning "Aucun groupe trouvé. recherche d'un groupe $Fonction"
+                    try {
+                        $group = Get-ADGroup -Identity $Fonction
+                    } catch {$group = $null}
+                }
+                if ($group -eq $null) {
                     write-warning "Impossible de trouver un groupe correspondant. Ouverture du systÃ¨me de crÃ©ation des groupes."
                     write-host "Création d'un groupe utilisateur. Chargement ..."
-                    write-host "RecupÃ©ration du nom de la fonction"
+                    write-host "Recupération du nom de la fonction"
                     $Fonction = $Utilisateur.Fonction
                     write-host "Fonction : $Fonction"
                     write-host "Récupération du conteneur de groupes"
@@ -216,15 +222,17 @@ else {
                     elseif ($continue -eq "RO" -or $continue -eq "2") {
                         $Fonction = $Fonction + "_RO"                      
                     }
-                    New-ADGroup -Name "$Fonction"
+                    New-ADGroup `
+                    -Name "$Fonction" `
+                    -GroupScope 2 `
+                    -Path $GRPAdOu
                     write-host "Nouveau groupe créé : $Fonction. Stocké dans $GRPadOu"
-                }
-            }          
+                }         
             try {
                 Add-ADGroupMember `
                     -Identity "$Fonction" `
                     -Members "$Login"
-                Write-Host "$Nom $Prenom ajoutÃ© au groupe $Fonction"
+                Write-Host "$Nom $Prenom ajouté au groupe $Fonction"
                 Add-Content -Path "C:\Export.txt" -Value "$Nom $Prenom : $Login / $Password ($Fonction)"
                 $added += 1
             }
