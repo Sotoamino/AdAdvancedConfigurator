@@ -123,7 +123,7 @@ else {
         $total += 1
         $Prenom = $Utilisateur.Prenom
         $Nom = $Utilisateur.Nom
-        $Login = $Prenom + "." + $Nom
+        $Login = $Nom + "." + $Prenom.Substring(0,1)
         $Fonction = $Utilisateur.Fonction
         if ($RandomPass) {
             $Password = ([System.Web.Security.Membership]::GeneratePassword(14, 3))
@@ -189,14 +189,14 @@ else {
                 $group = Get-ADGroup -Identity $Fonction
                 } catch {$group = $null}
                 if ($group -eq $null) {
-                    $Fonction = $Fonction + "_RW"
+                    $Fonction = $Fonction + "_RO"
                     write-warning "Aucun groupe trouvé. recherche d'un groupe $Fonction"
                     try {
                         $group = Get-ADGroup -Identity $Fonction
                     } catch {$group = $null}
                 }
                 if ($group -eq $null) {
-                    $Fonction = $Utilisateur.Fonction + "_RO"
+                    $Fonction = $Utilisateur.Fonction + "_RW"
                     write-warning "Aucun groupe trouvé. recherche d'un groupe $Fonction"
                     try {
                         $group = Get-ADGroup -Identity $Fonction
@@ -215,18 +215,33 @@ else {
                         New-ADOrganizationalUnit -Name "Groupes" -ProtectedFromAccidentalDeletion $true
                         $GRPadOu = Get-ADOrganizationalUnit -Filter 'Name -eq "Groupes"'
                     }
-                    $continue = Read-Host "Voulez vous créer un groupe Read & Write (_RW), Read Only (_RO) ou autre (sans extension) ? [RW / 1] / [RO / 2] / [O / 3]"
-                    if ($continue -eq "RW" -or $continue -eq "3") {
-                        $Fonction = $Fonction + "_RW"                         
-                    }
-                    elseif ($continue -eq "RO" -or $continue -eq "2") {
-                        $Fonction = $Fonction + "_RO"                      
-                    }
+                    $continue = Read-Host "Voulez vous créer un groupe Read & Write (_RW) et Read Only (_RO) ou autre (sans extension) ? [RW + RO : 1] / [O : 3]"
+                    if ($continue -eq "1") {
+                    $RAW = $Fonction
+                    $Fonction = $Fonction + "_RW"  
+                    New-ADGroup `
+                    -Name "$Fonction" `
+                    -GroupScope 2 `
+                    -Path $GRPAdOu
+                    $Fonction = $RAW + "_RO"
+                    New-ADGroup `
+                    -Name "$Fonction" `
+                    -GroupScope 2 `
+                    -Path $GRPAdOu
+                    write-host "Nouveau groupe créés : $Fonction et $RAW_RW. Stocké dans $GRPadOu"                      
+                    } else {
                     New-ADGroup `
                     -Name "$Fonction" `
                     -GroupScope 2 `
                     -Path $GRPAdOu
                     write-host "Nouveau groupe créé : $Fonction. Stocké dans $GRPadOu"
+                    }
+                    $Name = $Fonction + "_Password-Editor"
+                    $ACLName = $Fonction + "-Admin"
+                    New-ADGroup `
+                    -Name $Name `
+                    -GroupScope 2 `
+                    -Path $GRPAdOu
                 }         
             try {
                 Add-ADGroupMember `
@@ -248,6 +263,20 @@ else {
             $Error.clear()
         }
     }
+    write-host "Modification des unités d'organisation par défaut"
+    $CmptrAdOu = Get-ADOrganizationalUnit -Filter 'Name -eq "Postes-Clients"'
+    if ( $CmptrAdOu -eq $null) {
+        write-warning 'Impossible de trouver une Unité d Organisation "Postes-Clients". Création en cours ...'
+        New-ADOrganizationalUnit -Name "Postes-Clients" -ProtectedFromAccidentalDeletion $true
+        $CmptradOu = Get-ADOrganizationalUnit -Filter 'Name -eq "Postes-Clients"'
+    }
+    redircmp $CmptrAdOu
+    write-host "Unité d'organisation par défaut pour les ordinateurs défini sur $CmptrAdOu"
+    redirusr $AdOu
+    write-host "Unité d'organisation par défaut pour les utilisateurs défini sur $AdOu"
     $stat = $total - $added
     Write-Host "Fin du script. $added/$total comptes créés. $stat entrée(s) invalide(s)."
+
+
+
 }
