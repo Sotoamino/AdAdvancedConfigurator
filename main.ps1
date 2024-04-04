@@ -238,8 +238,7 @@ else {
                     -Path $GRPAdOu
                     write-host "Nouveau groupe créé : $Fonction. Stocké dans $GRPadOu"
                     }
-                    $Name = $Fonction + "_Password-Editor"
-                    $ACLName = $Fonction + "-Admin"
+                    $Name = $Fonction + "_Manager"
                     New-ADGroup `
                     -Name $Name `
                     -GroupScope 2 `
