@@ -114,8 +114,8 @@ else {
     }
     write-host $adOu
     Add-Type -AssemblyName System.Web
-    Clear-Content "C:\Export.txt"
-    Clear-Content "C:\useradd-logs.txt"
+    Clear-Content "$initialDirectory\Export.txt"
+    Clear-Content "$initialDirectory\useradd-logs.txt"
     $CSVFile = Import-Csv -Path $path -Delimiter $CSVDelimiter -Encoding UTF8
     $total = 0
     $added = 0
@@ -170,19 +170,19 @@ else {
         }
         catch {
             Write-error "$Error"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "[ERREUR] (User) : $Error[0]"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> Name : $Nom $Prenom"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> Display Name : $Nom $Prenom"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> GivenName : $Prenom"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> Surname : $Nom"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> SamAccountName : $Login"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> UserPrincipalName : $Mail"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> EmailAddress : $Mail"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> Title : $Fonction"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> Path : $AdOu"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> Password : $Password"
-            Add-Content -Path "C:\useradd-logs.txt" -Value "> ChangePasswordAtLogon : $ChangePassAtlogon"
-            Add-Content -Path "C:\useradd-logs.txt" -Value " "
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "[ERREUR] (User) : $Error[0]"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Name : $Nom $Prenom"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Display Name : $Nom $Prenom"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> GivenName : $Prenom"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Surname : $Nom"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> SamAccountName : $Login"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> UserPrincipalName : $Mail"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> EmailAddress : $Mail"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Title : $Fonction"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Path : $AdOu"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Password : $Password"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> ChangePasswordAtLogon : $ChangePassAtlogon"
+            Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value " "
         }
         if ( -not $Error) {
                 write-host "Recherche de groupe"
@@ -249,14 +249,14 @@ else {
                     -Identity "$Fonction" `
                     -Members "$Login"
                 Write-Host "$Nom $Prenom ajouté au groupe $Fonction"
-                Add-Content -Path "C:\Export.txt" -Value "$Nom $Prenom : $Login / $Password ($Fonction)"
+                Add-Content -Path "$initialDirectory\Export.txt" -Value "$Nom $Prenom : $Login / $Password ($Fonction)"
                 $added += 1
             }
             catch {
                 Write-error "$Error"
-                Add-Content -Path "C:\useradd-logs.txt" -Value "[ERREUR] (Group) : $Error[0]"
-                Add-Content -Path "C:\useradd-logs.txt" -Value "> Identity : $Fonction"
-                Add-Content -Path "C:\useradd-logs.txt" -Value "> Members : $Login"
+                Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "[ERREUR] (Group) : $Error[0]"
+                Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Identity : $Fonction"
+                Add-Content -Path "$initialDirectory\useradd-logs.txt" -Value "> Members : $Login"
                 $Error.Clear()
             }
         }
