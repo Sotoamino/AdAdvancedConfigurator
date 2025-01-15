@@ -1,4 +1,4 @@
-﻿# Définir l'encodage en UTF-8
+# Définir l'encodage en UTF-8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "######################################################"
@@ -14,16 +14,16 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Web
 Import-Module ActiveDirectory
 
-
+#Définition d'un dossier de base
 $initialDirectory = [Environment]::GetFolderPath('Desktop')
 try {
-    Clear-Content "$initialDirectory\UserList.txt"
+    Clear-Content "$initialDirectory\UserList.txt" #Suppression du contenu du fichier listage utilisateurs créé
 } catch {
     throw $_
 }
 
 
-function UserLogging {
+function UserLogging { #Fonction de log des utilisateurs créés
     param (
         [string]$Username,
         [string]$Pass,
@@ -33,7 +33,7 @@ function UserLogging {
 
 }
 
-function Error {
+function Error { #Fonction de notification des erreurs
     param (
         [string]$Key,
         [bool]$Abort = $false
@@ -45,34 +45,33 @@ function Error {
         "002" = "Votre machine n'est pas liée à un serveur Active Directory.";
         "003" = "Vous ne disposez pas des droits d'administration sur votre domaine.";
         "004" = "Une erreur est survenue durant la vérification de vos permissions. Merci de réessayer en tant qu'administrateur";
-        "005" = "Clé inconnue. Veuillez vérifier la clé d'erreur."
+        "005" = "Clé inconnue. Veuillez vérifier la clé d'erreur.";
+        "006" = "La création de l'utilisateur a échoué"
     }
 
-    # Récupérer le message d'erreur correspondant à la clé
+    #Récupération du message d'erreur
     if ($ErrorTable.ContainsKey($Key)) {
         $ErrorMessage = $ErrorTable[$Key]
     } else {
-        # Message par défaut si la clé n'existe pas
         $ErrorMessage = $ErrorTable["E005"]
     }
 
-    # Afficher le message dans une boîte de dialogue
+    # Affichage du message d'erreur dans Pop-up
     [System.Windows.Forms.MessageBox]::Show($ErrorMessage, "Erreur", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
 
-    if ($Abort) {
+    if ($Abort) { #Si abort true, on kill le script
         Exit
     }
 }
 
-function IsInDomain {
-    # Obtenir les informations sur l'ordinateur local
+function IsInDomain { #Vérifier que l'ordinateur est dans un domaine
     $ComputerInfo = Get-CimInstance -ClassName Win32_ComputerSystem
 
     if (-not $ComputerInfo.PartOfDomain) {
         Error -Key "002" -Abort $true
     }
 }
-function IsDomainPingable {
+function IsDomainPingable {# Vérification que le domaine AD est pingable
         # Vérifie le contrôleur de domaine de la machine locale
         $domainController = (Get-ADDomainController -Discover -Domain (Get-ADDomain).DNSRoot).Name
 
@@ -84,7 +83,7 @@ function IsDomainPingable {
             Error -Key "001" -Abort $true
         }
 }
-function IsAdminDomaine {
+function IsAdminDomaine {# Vérifier que l'utilisateur est administrateur du domaine
     try {
         $user = [System.Security.Principal.WindowsIdentity]::GetCurrent() # Récupération de l'utilisateur actuel
         $principal = New-Object System.Security.Principal.WindowsPrincipal($user) #Récupération des permissions de l'utilisateur actuel
@@ -96,9 +95,10 @@ function IsAdminDomaine {
         Error -Key "004" -Abort $true
     }
 }
-function CreateService {
+function CreateService { #Création de service
     param (
-        [string]$Name
+        [string]$Name,
+        [bool]$Silent = $false
     )
 
 
@@ -107,7 +107,7 @@ function CreateService {
     if (Get-ADOrganizationalUnit -Filter "Name -eq '$Name'") {
         [System.Windows.MessageBox]::Show("L'unité d'organisation $Name est déjà créée.", "Erreur serveur", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
     } else {
-        # Créer l'OU parent 'Services' si nécessaire
+        # Créer l'OU parent si nécessaire
         if (-not (Get-ADOrganizationalUnit -Filter { Name -eq 'Services' })) {
             try {
             New-ADOrganizationalUnit -Name "Services" -ProtectedFromAccidentalDeletion $true
@@ -142,7 +142,7 @@ function CreateService {
         $acl = Get-Acl -Path $FolderPath
         $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) }
 
-        # Ajouter les autorisations pour le groupe $Name
+        # Ajouter les autorisations pour le groupe Service
         $accessRule1 = New-Object System.Security.AccessControl.FileSystemAccessRule("$Name", "Read,Write", "ContainerInherit,ObjectInherit", "None", "Allow")
         $acl.AddAccessRule($accessRule1)
 
@@ -152,7 +152,9 @@ function CreateService {
 
         # Appliquer les modifications
         Set-Acl -Path $FolderPath -AclObject $acl
-        [System.Windows.Forms.MessageBox]::Show("Le service $Name a été correctement ajouté", "Notification")
+        if(-not $Silent) {
+            [System.Windows.Forms.MessageBox]::Show("Le service $Name a été correctement ajouté", "Notification")
+        }
     } catch {
         Write-Error "Erreur lors de la configuration des autorisations : $_"
     }
@@ -166,48 +168,37 @@ function CreateService {
     
 }
 
-function CreateADUser {
+function CreateADUser { #Fonction de création de l'utilisateur
     param(
         [string]$Name,
         [string]$LastName,
-        [string]$Service
+        [string]$Service,
+        [bool]$Silent = $false
     )
-    # Récupérer le domaine Active Directory
-    $DomainInfo = Get-ADDomain
-    $DomainName = $DomainInfo.DNSRoot
-
     # Vérifier et créer l'OU si nécessaire
     if (-not (Get-ADOrganizationalUnit -Filter "Name -eq '$Service'")) {
-        CreateService -Name $Service
+        CreateService -Name $Service -Silent $Silent
     }
     $FinalOU = Get-ADOrganizationalUnit -Filter "Name -eq '$Service'"
 
     # Réduction de la longueur du LastName si nécessaire
     $TrunkLastName = if ($LastName.Length -gt 17) { $LastName.Substring(0, 17) } else { $LastName }
 
-    # Génération du login (initialement $Name + premier caractère du nom)
+    # Génération du login
     $Login = ($Name.Substring(0,1) + "." + $TrunkLastName).ToLower()
 
-    # Gestion des collisions de logins
+    # Gestion des doublons de logins
     $OriginalLogin = $Login
     $suffixe = 1
     while (Get-ADUser -Filter "SamAccountName -eq '$Login'") {
         $Login = "$OriginalLogin$suffixe"
         $suffixe++
     }
-
-    # Génération de l'adresse e-mail
-    $Email = "$Login@$DomainName"
-
-    # Génération d'un mot de passe alphanumérique
+    # Génération d'un mot de passe
     $Password = [System.Web.Security.Membership]::GeneratePassword(14, 3)
     Write-Output $Password
 
-    # Création de l'utilisateur
-    try {
-
-
-
+    try {# Création de l'utilisateur
         New-ADUser `
             -Name "$LastName $Name" `
             -DisplayName "$LastName $Name" `
@@ -215,7 +206,6 @@ function CreateADUser {
             -Surname $LastName `
             -SamAccountName $Login `
             -UserPrincipalName $Email `
-            -EmailAddress $Email `
             -Title $Service `
             -Enabled $true `
             -HomeDirectory "\\vm-ad\Data\Utilisateurs\$Login" `
@@ -229,20 +219,18 @@ function CreateADUser {
             $AccessRule = New-Object System.Security.AccessControl.FileSystemAccessRule("$Login", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
             $acl.AddAccessRule($AccessRule)
             Set-Acl "\\vm-ad\Data\Utilisateurs\$Login" $acl
-            
-            [System.Windows.Forms.MessageBox]::Show("Utilisateur $Login créé avec le mot de passe $Password", "Notification")
-
-        Write-Host ""
-
+            if(-not $Silent) {
+                [System.Windows.Forms.MessageBox]::Show("Utilisateur $Login créé avec le mot de passe $Password", "Notification")
+            }
     } catch {
-        Write-Host "Erreur lors de la création de l'utilisateur : $_"
+        Error -Key "006"
     }
 
     # Logging des informations utilisateur
     UserLogging -Username $Login -Pass $Password -Group $Service
 }
 
-function Get-Delimiter {
+function Get-Delimiter { #Récupération automatique des délimiteurs CSV / XLSX
     param (
         [string]$filePath
     )
@@ -250,14 +238,12 @@ function Get-Delimiter {
     try {
         # Vérifier si c'est un fichier CSV
         if ($filePath -like "*.csv") {
-            Write-Host "Traitement du fichier CSV : $filePath"
             $line = Get-Content -Path $filePath | Select-Object -First 1
             $delimiters = @(",", ";", "`t", "|")
 
             foreach ($delimiter in $delimiters) {
                 $count = ($line -split $delimiter).Count
                 if ($count -gt 1) {
-                    Write-Host "Délimiteur trouvé : $delimiter"
                     return $delimiter
                 }
             }
@@ -266,7 +252,6 @@ function Get-Delimiter {
 
         # Si c'est un fichier Excel
         elseif ($filePath -like "*.xlsx") {
-            Write-Host "Traitement du fichier Excel : $filePath"
             return ","
         }
 
@@ -295,7 +280,7 @@ function ProcessCsv {
 
         # Si c'est un fichier Excel
         elseif ($filePath -like "*.xlsx") {
-            if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
+            if (-not (Get-Module -ListAvailable -Name ImportExcel)) { #Si le module n'est pas existant, on l'installe
                 Install-Module -Name ImportExcel -Force -Scope CurrentUser
             }            # Utilisation du module ImportExcel pour charger les données Excel
             $csvData = Import-Excel -Path $filePath
@@ -327,14 +312,12 @@ function MassiveAdd {
 
     if ($response -eq 'OK') {
         $path = $OpenFileDialog.FileName
-        Write-Host "Fichier sélectionné : $path"
 
         # Traiter le fichier et récupérer les données
         try {
             $csvData = ProcessCsv -filePath $path
         } catch {
-            [System.Windows.Forms.MessageBox]::Show("Erreur lors du traitement du fichier : $_", "Erreur", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-            return
+            Error -Key "Erreur lors du traitement du fichier" -Abort $true
         }
 
         # Vérifier si les données contiennent les colonnes attendues
@@ -355,13 +338,14 @@ function MassiveAdd {
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/> <!-- Nouvelle rangée pour les boutons -->
         </Grid.RowDefinitions>
 
         <!-- Description -->
         <TextBlock Text="Données du fichier CSV" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,10,0,10" Foreground="#333333"/>
 
         <!-- Affichage des données CSV -->
-        <ListView Name="CSVListView" Grid.Row="1" Margin="0,10" Height="200">
+        <ListView Name="CSVListView" Grid.Row="1" Margin="0,10">
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="Nom" DisplayMemberBinding="{Binding Nom}" Width="150"/>
@@ -372,7 +356,7 @@ function MassiveAdd {
         </ListView>
 
         <!-- Boutons -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="10">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="10">
             <Button Name="LancerButton" Content="Lancer" Width="100" Height="30" Margin="10"/>
             <Button Name="AnnulerButton" Content="Annuler" Width="100" Height="30" Margin="10"/>
         </StackPanel>
@@ -414,11 +398,10 @@ function MassiveAdd {
                 # Compter les utilisateurs traités
                 $counter = 0
             
-                # Boucle pour créer les utilisateurs
-                foreach ($entry in $csvData) {
+                foreach ($entry in $csvData) { #Pour chaque entrée utilisateur (ligne)
                     try {
                         # Appel de la fonction pour créer l'utilisateur
-                        CreateADUser -Name $($entry.Prénom) -LastName $($entry.Nom) -Service $($entry.Services)
+                        CreateADUser -Name $($entry.Prénom) -LastName $($entry.Nom) -Service $($entry.Services) -Silent $true
             
                         # Mettre à jour la barre de progression
                         $counter++
@@ -430,11 +413,10 @@ function MassiveAdd {
                         }
                     }
                     catch {
-                        [System.Windows.MessageBox]::Show("Erreur lors de la création de l'utilisateur: $($_.Exception.Message)", "Erreur", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+                        Error -Key "006"
                     }
                 }
             
-                # Fermer la fenêtre de progression après l'opération
                 $progressWindow.Close()
             })
 
@@ -450,24 +432,18 @@ function MassiveAdd {
 }
 
 function AddUserGUI {
-    function NewUserGUI {
-        # Importer le module Active Directory pour récupérer les OUs
-        Import-Module ActiveDirectory
-    
-        # Récupérer le domaine de la machine
-        $domain = (Get-ADDomain).DistinguishedName
-    
-        # Récupérer les unités d'organisation sous l'OU "Services"
+    $domain = (Get-ADDomain).DistinguishedName
 
-        $ouList = Get-ADOrganizationalUnit -Filter * -SearchBase "OU=Services,$domain" | Where-Object { $_.Name -ne "Services" } | Select-Object -ExpandProperty Name
-    
-        # Vérifier si des OUs ont été récupérées
-        if ($ouList.Count -eq 0) {
-            [System.Windows.MessageBox]::Show("Aucune unité d'organisation (OU) n'a été trouvée sous l'OU 'Services'.", "Erreur", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
-            return
-        }
-    
-        # Définir le XAML pour l'interface
+    # Récupérer les unités d'organisation sous l'OU Services
+
+    $ouList = Get-ADOrganizationalUnit -Filter * -SearchBase "OU=Services,$domain" | Where-Object { $_.Name -ne "Services" } | Select-Object -ExpandProperty Name
+
+    # Vérifier si des OUs ont été récupérées
+    if ($ouList.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("Aucune unité d'organisation (OU) n'a été trouvée sous l'OU 'Services'.", "Erreur", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+        return
+    }
+
 [xml]$xaml = @"
 <Window
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -487,13 +463,13 @@ function AddUserGUI {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Nom de l'utilisateur -->
-        <Label Content="Nom de l'utilisateur:" Margin="10,10,10,5" Grid.Row="0"/>
-        <TextBox Name="TextBoxNom" Margin="10,5" Grid.Row="1"/>
-
         <!-- Prénom -->
         <Label Content="Prénom de l'utilisateur:" Margin="10,10,10,5" Grid.Row="2"/>
         <TextBox Name="TextBoxPrenom" Margin="10,5" Grid.Row="3"/>
+
+        <!-- Nom de l'utilisateur -->
+        <Label Content="Nom de l'utilisateur:" Margin="10,10,10,5" Grid.Row="0"/>
+        <TextBox Name="TextBoxNom" Margin="10,5" Grid.Row="1"/>
 
         <!-- Liste déroulante des OU -->
         <Label Content="Sélectionnez une OU:" Margin="10,10,10,5" Grid.Row="4"/>
@@ -511,51 +487,39 @@ function AddUserGUI {
 </Window>
 "@
     
-        # Charger l'interface XAML dans une fenêtre
-        $reader = (New-Object System.Xml.XmlNodeReader $xaml)
-        $window = [Windows.Markup.XamlReader]::Load($reader)
-    
-        # Récupérer les éléments par leur nom pour interagir avec eux
-        $TextBoxNom = $window.FindName("TextBoxNom")
-        $TextBoxPrenom = $window.FindName("TextBoxPrenom")
-        $ComboBoxOU = $window.FindName("ComboBoxOU")
-        $ButtonExec = $window.FindName("ButtonExec")
-        $ButtonCancel = $window.FindName("ButtonCancel")
-    
-        # Remplir la ComboBox avec les OUs récupérées
-        $ComboBoxOU.ItemsSource = $ouList
-    
-        # Ajouter l'événement pour le bouton "Exécuter"
-        $ButtonExec.Add_Click({
-            $firstName = $TextBoxPrenom.Text
-            $lastName = $TextBoxNom.Text
-            $selectedOU = $ComboBoxOU.SelectedItem
-    
-            # Vérifier si tous les champs sont remplis
-            if ([string]::IsNullOrEmpty($firstName) -or [string]::IsNullOrEmpty($lastName) -or [string]::IsNullOrEmpty($selectedOU)) {
-                [System.Windows.MessageBox]::Show("Veuillez remplir tous les champs et sélectionner une unité d'organisation.", "Erreur de saisie", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-                return
-            }
-    
-           CreateADUser -Name $firstName -LastName $lastName -Service $selectedOU 
-        })
-    
-        # Ajouter l'événement pour le bouton "Annuler"
-        $ButtonCancel.Add_Click({
-            $window.Close()
-        })
-    
-        # Afficher la fenêtre
-        $window.ShowDialog()
-    }
-    
-    # Appeler la fonction pour afficher le formulaire
-    NewUserGUI
-    
+    $reader = (New-Object System.Xml.XmlNodeReader $xaml)
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+
+    $TextBoxNom = $window.FindName("TextBoxNom")
+    $TextBoxPrenom = $window.FindName("TextBoxPrenom")
+    $ComboBoxOU = $window.FindName("ComboBoxOU")
+    $ButtonExec = $window.FindName("ButtonExec")
+    $ButtonCancel = $window.FindName("ButtonCancel")
+
+    $ComboBoxOU.ItemsSource = $ouList #REmplir la liste déroulante avec les OU récupérés
+
+    $ButtonExec.Add_Click({
+        $firstName = $TextBoxPrenom.Text
+        $lastName = $TextBoxNom.Text
+        $selectedOU = $ComboBoxOU.SelectedItem
+
+        # Vérifier si tous les champs sont remplis
+        if ([string]::IsNullOrEmpty($firstName) -or [string]::IsNullOrEmpty($lastName) -or [string]::IsNullOrEmpty($selectedOU)) {
+            [System.Windows.MessageBox]::Show("Veuillez remplir tous les champs et sélectionner une unité d'organisation.", "Erreur de saisie", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+            return
+        }
+
+        CreateADUser -Name $firstName -LastName $lastName -Service $selectedOU 
+    })
+
+    $ButtonCancel.Add_Click({
+        $window.Close()
+    })
+
+    $window.ShowDialog()
 }
 
 function AddServiceGUI {    
-        # Définir le XAML pour l'interface
 [xml]$xaml = @"
 <Window 
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -591,16 +555,13 @@ function AddServiceGUI {
 </Window>
 "@
     
-        # Charger l'interface XAML dans une fenêtre
         $reader = (New-Object System.Xml.XmlNodeReader $xaml)
         $window = [Windows.Markup.XamlReader]::Load($reader)
     
-        # Récupérer les éléments par leur nom pour interagir avec eux
         $ComboBoxOU = $window.FindName("TextBoxService")
         $ButtonExec = $window.FindName("ButtonExec")
         $ButtonCancel = $window.FindName("ButtonCancel")
     
-        # Ajouter l'événement pour le bouton "Exécuter"
         $ButtonExec.Add_Click({
             $selectedOU = $ComboBoxOU.Text
     
@@ -609,22 +570,19 @@ function AddServiceGUI {
                 [System.Windows.MessageBox]::Show("Veuillez remplir tous les champs", "Erreur de saisie", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
                 return
             }
-    
-            # Affichage des paramètres
-            CreateService -Name $selectedOU
+            
+            #Création des services
+            CreateService -Name $selectedOU 
         })
     
-        # Ajouter l'événement pour le bouton "Annuler"
         $ButtonCancel.Add_Click({
             $window.Close()
         })
     
-        # Afficher la fenêtre
         $window.ShowDialog()
     }
 
 function Main {
-# Création de la fenêtre principale
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -659,20 +617,15 @@ function Main {
 </Window>
 "@
 
-# Charger le XAML dans un lecteur XAML
 $reader = (New-Object System.Xml.XmlNodeReader $xaml)
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
-# Définir les fonctions pour chaque bouton
 
-
-# Gestion des événements pour les boutons
 $window.FindName("CreateUser").Add_Click({ AddUserGUI })
 $window.FindName("CreateService").Add_Click({ AddServiceGUI })
 $window.FindName("MassiveAdd").Add_Click({ MassiveAdd })
 $window.FindName("CancelButton").Add_Click({$window.Close()})
 
-# Afficher la fenêtre principale
 $window.ShowDialog()
 }
 
