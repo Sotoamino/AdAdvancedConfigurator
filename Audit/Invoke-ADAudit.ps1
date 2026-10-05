@@ -172,26 +172,34 @@ function AuditGPOAnalysis{
  Section 'Analyse GPO';if(-not(Cmd Get-GPOReport)){Warn 'Get-GPOReport indisponible.';return};$rows=@();foreach($g in @(Get-GPO -All @ADParams)){try{[xml]$xml=Get-GPOReport -Guid $g.Id -ReportType Xml;$t=$xml.OuterXml;$f=@();if($t-match '(?i)EnableLUA.*false|FilterAdministratorToken.*false'){$f+='UAC weakening'};if($t-match '(?i)fDenyTSConnections.*0|Terminal Services'){$f+='RDP'};if($t-match '(?i)SMB1|LanmanServer.*SMB1'){$f+='SMB legacy'};if($t-match '(?i)DisableRealtimeMonitoring|DisableAntiSpyware'){$f+='Defender'};if($t-match '(?i)SeDebugPrivilege|SeTakeOwnershipPrivilege|SeBackupPrivilege'){$f+='Privileges sensibles'};if($f.Count){Finding Medium GPO ('Configuration sensible: '+$g.DisplayName) $g.DisplayName ($f-join ', ') 'Revoir la configuration.'};$rows+=[pscustomobject]@{Id=$g.Id.Guid;DisplayName=$g.DisplayName;Status=$g.GpoStatus;Flags=($f-join ' | ');Owner=$g.Owner;Created=$g.CreationTime;Modified=$g.ModificationTime}}catch{Warn ('GPO: '+$g.DisplayName+' / '+$_.Exception.Message)}};$Script:Results.GPOAnalysis=$rows;Ok ($rows.Count.ToString()+' GPO analysees.')
 }
 function ExportResults{
- New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
- $domain=$null
- try{$domain=(Get-ADDomain @ADParams).DNSRoot}catch{}
- $obj=[ordered]@{
-  Tool='AD Advanced Audit';Version=$Script:AuditVersion;StartedAt=$Script:StartedAt;FinishedAt=Get-Date
-  Domain=$domain;DomainController=$DomainController;ReadOnly=$true
-  Modules=@($Script:Results.Keys);Findings=@($Script:Findings);Results=$Script:Results
- }
- if($ExportFormat -in @('JSON','Both')){
-  $file=Join-Path $OutputPath 'AD-Audit.json'
-  $obj|ConvertTo-Json -Depth 20|Set-Content -Path $file -Encoding UTF8
-  Ok ('Export JSON: '+$file)
- }
- if($ExportFormat -in @('HTML','Both')){
-  $htmlFile=Join-Path $OutputPath 'AD-Audit.html'
-  $json=$obj|ConvertTo-Json -Depth 20
-  $safe=[System.Net.WebUtility]::HtmlEncode($json)
-  $html='<!doctype html><html><head><meta charset="utf-8"><title>AD Advanced Audit</title></head><body><h1>AD Advanced Audit</h1><p>Domaine: '+[System.Net.WebUtility]::HtmlEncode([string]$domain)+'</p><h2>Donnees JSON</h2><pre>'+ $safe +'</pre></body></html>'
-  Set-Content -Path $htmlFile -Value $html -Encoding UTF8
-  Ok ('Export HTML: '+$htmlFile)
+ try{
+  $domainName=''
+  try{$domainName=[string](Get-ADDomain @ADParams).DNSRoot}catch{}
+  $report=New-Object PSObject
+  Add-Member -InputObject $report -MemberType NoteProperty -Name Tool -Value 'AD Advanced Audit'
+  Add-Member -InputObject $report -MemberType NoteProperty -Name Version -Value $Script:AuditVersion
+  Add-Member -InputObject $report -MemberType NoteProperty -Name StartedAt -Value ([string]$Script:StartedAt)
+  Add-Member -InputObject $report -MemberType NoteProperty -Name FinishedAt -Value ([string](Get-Date))
+  Add-Member -InputObject $report -MemberType NoteProperty -Name Domain -Value $domainName
+  Add-Member -InputObject $report -MemberType NoteProperty -Name ReadOnly -Value $true
+  Add-Member -InputObject $report -MemberType NoteProperty -Name Results -Value $Script:Results
+  New-Item -ItemType Directory -Path $OutputPath -Force -ErrorAction Stop|Out-Null
+  if($ExportFormat -eq 'JSON' -or $ExportFormat -eq 'Both'){
+   $file=Join-Path $OutputPath 'AD-Audit.json'
+   $json=ConvertTo-Json -InputObject $report -Depth 10
+   [System.IO.File]::WriteAllText($file,$json,(New-Object System.Text.UTF8Encoding($false)))
+   Ok ('Export JSON: '+$file)
+  }
+  if($ExportFormat -eq 'HTML' -or $ExportFormat -eq 'Both'){
+   $htmlFile=Join-Path $OutputPath 'AD-Audit.html'
+   $json=ConvertTo-Json -InputObject $report -Depth 10
+   $safe=[System.Net.WebUtility]::HtmlEncode([string]$json)
+   $html='<!doctype html><html><head><meta charset="utf-8"><title>AD Advanced Audit</title></head><body><h1>AD Advanced Audit</h1><pre>'+ $safe +'</pre></body></html>'
+   [System.IO.File]::WriteAllText($htmlFile,$html,(New-Object System.Text.UTF8Encoding($false)))
+   Ok ('Export HTML: '+$htmlFile)
+  }
+ }catch{
+  throw ('Erreur pendant l export: '+$_.Exception.Message)
  }
 }
 function SelectModules{
