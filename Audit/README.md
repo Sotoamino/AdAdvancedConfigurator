@@ -119,3 +119,19 @@ Un audit AD peut contenir des noms, UPN, groupes privilégiés, structure OU, SP
 Le moteur d'audit utilise uniquement des opérations de lecture sur l'AD, la forêt, les GPO, les ACL, DNS et les objets de configuration. Il ne crée, modifie, supprime, désactive ou réinitialise aucun objet AD.
 
 La seule écriture locale effectuée par le script correspond aux fichiers de rapport demandés dans `-OutputPath`. Aucun module, service, tâche planifiée, variable système ou configuration Windows n'est installé ou modifié.
+
+
+## Analyse et scoring
+
+Le scoring est réalisé exclusivement dans le Viewer, à partir du JSON produit par l'audit.
+
+- Le collecteur PowerShell reste en lecture seule.
+- Aucun score n'est écrit dans Active Directory.
+- Le JSON source n'est pas modifié par le Viewer.
+- Le score global est accompagné d'un niveau de couverture.
+- Les scores sont détaillés par domaine.
+- Chaque pénalité affiche la règle, l'objet concerné, les données ayant déclenché la règle et une recommandation.
+- Les pénalités sont plafonnées par domaine afin d'éviter qu'un grand nombre d'objets similaires ne domine artificiellement le score.
+- L'absence d'un module audité n'est pas considérée comme une conformité : elle réduit la couverture de l'analyse.
+
+Le scoring est une analyse heuristique destinée à aider la revue humaine. Il ne constitue ni une certification, ni un équivalent d'un audit RSoP/GPO complet ou d'une analyse d'escalade de privilèges.
