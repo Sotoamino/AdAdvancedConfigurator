@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.3.2';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.3.3';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -291,6 +291,35 @@ function AuditAdminSDHolder{
 function AuditGPOAnalysis{
  Section 'Analyse GPO';if(-not(Cmd Get-GPOReport)){Warn 'Get-GPOReport indisponible.';return};$rows=@();foreach($g in @(Get-GPO -All @ADParams)){try{[xml]$xml=Get-GPOReport -Guid $g.Id -ReportType Xml;$t=$xml.OuterXml;$f=@();if($t-match '(?i)EnableLUA.*false|FilterAdministratorToken.*false'){$f+='UAC weakening'};if($t-match '(?i)fDenyTSConnections.*0|Terminal Services'){$f+='RDP'};if($t-match '(?i)SMB1|LanmanServer.*SMB1'){$f+='SMB legacy'};if($t-match '(?i)DisableRealtimeMonitoring|DisableAntiSpyware'){$f+='Defender'};if($t-match '(?i)SeDebugPrivilege|SeTakeOwnershipPrivilege|SeBackupPrivilege'){$f+='Privileges sensibles'};if($f.Count){Finding Medium GPO ('Configuration sensible: '+$g.DisplayName) $g.DisplayName ($f-join ', ') 'Revoir la configuration.'};$rows+=[pscustomobject]@{Id=$g.Id.Guid;DisplayName=$g.DisplayName;Status=$g.GpoStatus;Flags=($f-join ' | ');Owner=$g.Owner;Created=$g.CreationTime;Modified=$g.ModificationTime}}catch{Warn ('GPO: '+$g.DisplayName+' / '+$_.Exception.Message)}};$Script:Results.GPOAnalysis=$rows;Ok ($rows.Count.ToString()+' GPO analysees.')
 }
+function ConvertTo-AuditSerializable{
+ param([object]$Value,[int]$Depth=0)
+ if($null -eq $Value){return $null}
+ if($Depth -gt 12){return [string]$Value}
+ if($Value -is [string] -or $Value -is [char] -or $Value -is [bool] -or $Value -is [int] -or $Value -is [int16] -or $Value -is [int32] -or $Value -is [int64] -or $Value -is [uint16] -or $Value -is [uint32] -or $Value -is [uint64] -or $Value -is [decimal] -or $Value -is [double] -or $Value -is [single]){return $Value}
+ if($Value -is [datetime]){return $Value.ToString('o')}
+ if($Value -is [guid]){return $Value.ToString()}
+ if($Value -is [System.Security.Principal.SecurityIdentifier]){return $Value.Value}
+ if($Value -is [byte[]]){return [Convert]::ToBase64String($Value)}
+ if($Value -is [System.Xml.XmlDocument] -or $Value -is [System.Xml.XmlElement]){return $Value.OuterXml}
+ if($Value -is [System.Collections.IDictionary]){
+  $o=[ordered]@{}
+  foreach($key in $Value.Keys){$o[[string]$key]=ConvertTo-AuditSerializable $Value[$key] ($Depth+1)}
+  return $o
+ }
+ if($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])){
+  $a=New-Object System.Collections.Generic.List[object]
+  foreach($item in $Value){[void]$a.Add((ConvertTo-AuditSerializable $item ($Depth+1)))}
+  return @($a.ToArray())
+ }
+ $o=[ordered]@{}
+ $props=@($Value.PSObject.Properties | Where-Object {$_.MemberType -in @('NoteProperty','Property','AliasProperty')})
+ if($props.Count -gt 0){
+  foreach($p in $props){try{$o[$p.Name]=ConvertTo-AuditSerializable $p.Value ($Depth+1)}catch{$o[$p.Name]=[string]$p.Value}}
+  return $o
+ }
+ return [string]$Value
+}
+
 function ExportResults{
  try{
   $domainName=''
@@ -308,7 +337,8 @@ function ExportResults{
   New-Item -ItemType Directory -Path $OutputPath -Force -ErrorAction Stop|Out-Null
   if($ExportFormat -eq 'JSON' -or $ExportFormat -eq 'Both'){
    $file=Join-Path $OutputPath 'AD-Audit.json'
-   $json=ConvertTo-Json -InputObject $report -Depth 10
+   $serializableReport=ConvertTo-AuditSerializable $report
+   $json=ConvertTo-Json -InputObject $serializableReport -Depth 20
    [System.IO.File]::WriteAllText([string]$file,[string]$json)
    Ok ('Export JSON: '+$file)
   }
