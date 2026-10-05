@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.5.2';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.5.3';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie';Security='Collecte sécurité approfondie'
@@ -441,7 +441,7 @@ function Write-ExportProgress{
 }
 function Format-Elapsed([System.Diagnostics.Stopwatch]$Timer){
  if($null -eq $Timer){return '00:00:00'}
- return $Timer.Elapsed.ToString('hh\\:mm\\:ss')
+ return $Timer.Elapsed.ToString('hh\:mm\:ss')
 }
 
 function ExportResults{
