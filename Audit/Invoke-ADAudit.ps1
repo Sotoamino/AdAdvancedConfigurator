@@ -309,7 +309,8 @@ function ExportResults{
   if($ExportFormat -eq 'JSON' -or $ExportFormat -eq 'Both'){
    $file=Join-Path $OutputPath 'AD-Audit.json'
    $json=ConvertTo-Json -InputObject $report -Depth 10
-   [System.IO.File]::WriteAllText($file,$json,(New-Object System.Text.UTF8Encoding))
+   $utf8=New-Object System.Text.UTF8Encoding($false)
+   [System.IO.File]::WriteAllText([string]$file,[string]$json,[System.Text.Encoding]$utf8)
    Ok ('Export JSON: '+$file)
   }
   if($ExportFormat -eq 'HTML' -or $ExportFormat -eq 'Both'){
@@ -317,7 +318,8 @@ function ExportResults{
    $json=ConvertTo-Json -InputObject $report -Depth 10
    $safe=[System.Net.WebUtility]::HtmlEncode([string]$json)
    $html='<!doctype html><html><head><meta charset="utf-8"><title>AD Advanced Audit</title></head><body><h1>AD Advanced Audit</h1><pre>'+ $safe +'</pre></body></html>'
-   [System.IO.File]::WriteAllText($htmlFile,$html,(New-Object System.Text.UTF8Encoding($false)))
+   $utf8=New-Object System.Text.UTF8Encoding($false)
+   [System.IO.File]::WriteAllText([string]$htmlFile,[string]$html,[System.Text.Encoding]$utf8)
    Ok ('Export HTML: '+$htmlFile)
   }
  }catch{
