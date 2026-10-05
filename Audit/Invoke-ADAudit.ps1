@@ -164,7 +164,22 @@ function ExportResults{
   Set-Content -Path $htmlFile -Value $html -Encoding UTF8;Ok ('Export HTML: '+$htmlFile)
  }
 }function SelectModules{
- Section 'Selection des modules';$k=@($ModuleDefinitions.Keys);for($i=0;$i-lt $k.Count;$i++){W(('[{0,2}] {1,-12} {2}'-f($i+1),$k[$i],$ModuleDefinitions[$k[$i]]))};W '[A] Tout auditer';$a=Read-Host 'Selection (ex: 1,2,5 ou A)';if($a-match '^[Aa]$'){return $k};$r=@();foreach($p in($a-split ',')){$n=0;if([int]::TryParse($p.Trim(),[ref]$n)-and$n-ge 1-and$n-le$k.Count){$r+=$k[$n-1]}};@($r|select -Unique)
+ Section 'Selection des modules'
+ $k=@($ModuleDefinitions.Keys)
+ for($i=0;$i-lt $k.Count;$i++){W(('[{0,2}] {1,-12} {2}'-f($i+1),$k[$i],$ModuleDefinitions[$k[$i]]))}
+ W '[A] Tout auditer'
+ $a=Read-Host 'Selection (ex: 1,2,5 ou A)'
+ if([string]::IsNullOrWhiteSpace($a)){return @()}
+ if($a.Trim().ToUpper() -eq 'A'){return @($k)}
+ $selected=New-Object System.Collections.Generic.List[string]
+ foreach($part in $a.Split(',')){
+  $value=$part.Trim()
+  if($value -match '^\d+$'){
+   $idx=([int]$value)-1
+   if($idx -ge 0 -and $idx -lt $k.Count){[void]$selected.Add([string]$k[$idx])}
+  }
+ }
+ return @($selected|Select-Object -Unique)
 }
 function Run([string]$n){switch($n){Users{AuditUsers};Groups{AuditGroups};Computers{AuditComputers};OUs{AuditOUs};GPOs{AuditGPOs};Domain{AuditDomain};DCs{AuditDCs};Sites{AuditSites};Trusts{AuditTrusts};DNS{AuditDNS};Delegation{AuditDelegation};SPNs{AuditSPNs};LAPS{AuditLAPS};Health{AuditHealth};Privileged{AuditPrivileged};Kerberos{AuditKerberos};PasswordPolicies{AuditPasswordPolicies};Schema{AuditSchema};ADCS{AuditADCS};RecycleBin{AuditRecycleBin};AdminSDHolder{AuditAdminSDHolder};GPOAnalysis{AuditGPOAnalysis};default{Warn ('Module inconnu: '+$n)}}}
 Section ('AD Advanced Audit v'+$Script:AuditVersion)
