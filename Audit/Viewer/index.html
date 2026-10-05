@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AD Advanced Audit — Viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">AD ADVANCED AUDIT</div>
+      <h1>Audit Viewer</h1>
+      <p class="subtitle">Visualiseur local des rapports JSON générés par Invoke-ADAudit.ps1</p>
+    </div>
+    <div class="actions">
+      <label class="button primary">
+        Charger un JSON
+        <input id="fileInput" type="file" accept=".json,application/json" hidden>
+      </label>
+      <button id="resetBtn" class="button" type="button">Réinitialiser</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-title">Navigation</div>
+      <nav id="moduleNav"></nav>
+      <div class="sidebar-footer">
+        <span class="dot"></span>
+        Lecture seule · aucune donnée envoyée
+      </div>
+    </aside>
+
+    <section class="content">
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">AD</div>
+        <h2>Charge un rapport d'audit</h2>
+        <p>Sélectionne <strong>AD-Audit.json</strong> produit par le script.</p>
+        <label class="button primary large">
+          Ouvrir le rapport
+          <input id="emptyFileInput" type="file" accept=".json,application/json" hidden>
+        </label>
+      </div>
+
+      <div id="app" hidden>
+        <section id="dashboard" class="view active"></section>
+        <section id="tableView" class="view"></section>
+        <section id="detailView" class="view"></section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
