@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.2.1';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.3.0';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -56,7 +56,10 @@ function Get-UserLinkedGPOs([string]$UserDN){
   try{
    $inheritance=Get-GPInheritance -Target $ou -ErrorAction Stop
    foreach($link in @($inheritance.GpoLinks)){
-    if($link.GpoId){[void]$result.Add(([string]$link.DisplayName)+' ['+([string]$link.GpoId)+']')}
+    if($link.GpoId){[void]$result.Add(([string]$link.DisplayName)+' ['+([string]$link.GpoId)+'] [Direct]')}
+   }
+   foreach($link in @($inheritance.InheritedGpoLinks)){
+    if($link.GpoId){[void]$result.Add(([string]$link.DisplayName)+' ['+([string]$link.GpoId)+'] [Inherited]')}
    }
   }catch{}
  }
@@ -245,7 +248,30 @@ function AuditPrivileged{
  Section 'Audit des privileges';$rows=@();foreach($name in (PrivGroups)){try{$g=Get-ADGroup @ADParams -Identity $name -Properties *;$m=@(Get-ADGroupMember @ADParams -Identity $g.DistinguishedName -Recursive -ErrorAction SilentlyContinue);$rows+=[pscustomobject]@{Group=$name;Exists=$true;MemberCount=$m.Count;Members=(($m|select -Expand Name)-join ' | ');DistinguishedName=$g.DistinguishedName};if($m.Count){Finding Medium Privileged ('Groupe privilegie: '+$name) $name ($m.Count.ToString()+' membre(s).') 'Verifier les membres.'}}catch{$rows+=[pscustomobject]@{Group=$name;Exists=$false;MemberCount=0;Members='';DistinguishedName=''}}};$Script:Results.Privileged=$rows;Ok ($rows.Count.ToString()+' groupes sensibles verifies.')
 }
 function AuditKerberos{
- Section 'Audit Kerberos';$rows=@(Get-ADUser @ADParams -Filter * -Properties DoesNotRequirePreAuth,TrustedForDelegation,TrustedToAuthForDelegation,ServicePrincipalName,Enabled,PasswordLastSet|%{if($_.DoesNotRequirePreAuth -or  $_.TrustedForDelegation -or  $_.TrustedToAuthForDelegation -or  @($_.ServicePrincipalName).Count){[pscustomobject]@{Account=$_.SamAccountName;Enabled=$_.Enabled;ASREP=$_.DoesNotRequirePreAuth;UnconstrainedDelegation=$_.TrustedForDelegation;ConstrainedDelegation=$_.TrustedToAuthForDelegation;SPNCount=@($_.ServicePrincipalName).Count;SPNs=(@($_.ServicePrincipalName)-join ' | ');PasswordLastSet=$_.PasswordLastSet;DistinguishedName=$_.DistinguishedName}}});foreach($r in $rows){if($r.ASREP){Finding High Kerberos 'AS-REP roastable account' $r.Account 'Pre-authentification desactivee.' 'Reactiver la pre-authentification.'};if($r.UnconstrainedDelegation){Finding High Kerberos 'Delegation non contrainte' $r.Account 'TrustedForDelegation active.' 'Verifier et supprimer si inutile.'}};$Script:Results.Kerberos=$rows;Ok ($rows.Count.ToString()+' comptes sensibles.')
+ Section 'Audit Kerberos'
+ $rows=New-Object System.Collections.Generic.List[object]
+ $users=@(Get-ADUser @ADParams -Filter * -Properties DoesNotRequirePreAuth,TrustedForDelegation,TrustedToAuthForDelegation,ServicePrincipalName,Enabled,PasswordLastSet,'msDS-AllowedToDelegateTo')
+ foreach($u in $users){
+  $spns=@($u.ServicePrincipalName);$targets=@($u.'msDS-AllowedToDelegateTo')
+  if($u.DoesNotRequirePreAuth -or $u.TrustedForDelegation -or $u.TrustedToAuthForDelegation -or $spns.Count -or $targets.Count){
+   [void]$rows.Add([pscustomobject]@{ObjectType='User';Account=$u.SamAccountName;Enabled=$u.Enabled;ASREP=$u.DoesNotRequirePreAuth;UnconstrainedDelegation=$u.TrustedForDelegation;ProtocolTransition=$u.TrustedToAuthForDelegation;ConstrainedDelegationTargets=($targets-join ' | ');SPNCount=$spns.Count;SPNs=($spns-join ' | ');PasswordLastSet=$u.PasswordLastSet;DistinguishedName=$u.DistinguishedName})
+  }
+ }
+ $computers=@(Get-ADComputer @ADParams -Filter * -Properties TrustedForDelegation,TrustedToAuthForDelegation,ServicePrincipalName,'msDS-AllowedToDelegateTo','msDS-AllowedToActOnBehalfOfOtherIdentity',Enabled)
+ foreach($co in $computers){
+  $spns=@($co.ServicePrincipalName);$targets=@($co.'msDS-AllowedToDelegateTo');$rbcd=($null -ne $co.'msDS-AllowedToActOnBehalfOfOtherIdentity')
+  if($co.TrustedForDelegation -or $co.TrustedToAuthForDelegation -or $spns.Count -or $targets.Count -or $rbcd){
+   [void]$rows.Add([pscustomobject]@{ObjectType='Computer';Account=$co.Name;Enabled=$co.Enabled;ASREP=$false;UnconstrainedDelegation=$co.TrustedForDelegation;ProtocolTransition=$co.TrustedToAuthForDelegation;ConstrainedDelegationTargets=($targets-join ' | ');ResourceBasedConstrainedDelegation=$rbcd;SPNCount=$spns.Count;SPNs=($spns-join ' | ');PasswordLastSet=$co.PasswordLastSet;DistinguishedName=$co.DistinguishedName})
+  }
+ }
+ $Script:Results.Kerberos=@($rows)
+ foreach($r in @($rows)){
+  if($r.ASREP){Finding High Kerberos 'AS-REP roastable account' $r.Account 'Pre-authentification desactivee.' 'Reactiver la pre-authentification.'}
+  if($r.UnconstrainedDelegation){Finding High Kerberos 'Delegation non contrainte' $r.Account 'TrustedForDelegation active.' 'Verifier et supprimer si inutile.'}
+  if($r.ConstrainedDelegationTargets){Finding Medium Kerberos 'Delegation contrainte configuree' $r.Account ($r.ConstrainedDelegationTargets) 'Verifier que chaque SPN cible est strictement necessaire.'}
+  if($r.ResourceBasedConstrainedDelegation){Finding Medium Kerberos 'RBCD configuree' $r.Account 'msDS-AllowedToActOnBehalfOfOtherIdentity est present.' 'Identifier les principaux autorises et verifier la legitimite de la delegation.'}
+ }
+ Ok ($rows.Count.ToString()+' comptes et ordinateurs sensibles.')
 }
 function AuditPasswordPolicies{
  Section 'Audit des politiques de mots de passe';$p=Get-ADDefaultDomainPasswordPolicy @ADParams;$rows=@([pscustomobject]@{Type='DefaultDomain';Name='Default Domain Policy';MinPasswordLength=$p.MinPasswordLength;PasswordHistoryCount=$p.PasswordHistoryCount;ComplexityEnabled=$p.ComplexityEnabled;MaxPasswordAge=$p.MaxPasswordAge;MinPasswordAge=$p.MinPasswordAge;LockoutThreshold=$p.LockoutThreshold});if(Cmd Get-ADFineGrainedPasswordPolicy){$rows+=@(Get-ADFineGrainedPasswordPolicy @ADParams -Filter * -Properties *|%{[pscustomobject]@{Type='FineGrained';Name=$_.Name;Precedence=$_.Precedence;MinPasswordLength=$_.MinPasswordLength;PasswordHistoryCount=$_.PasswordHistoryCount;ComplexityEnabled=$_.ComplexityEnabled;MaxPasswordAge=$_.MaxPasswordAge;LockoutThreshold=$_.LockoutThreshold;AppliesTo=(@($_.AppliesTo)-join ' | ')}})};$Script:Results.PasswordPolicies=$rows;Ok ($rows.Count.ToString()+' politiques.')
