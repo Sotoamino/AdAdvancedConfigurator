@@ -1,6 +1,6 @@
 # AD Advanced Audit
 
-Framework PowerShell d'audit et d'analyse approfondie d'Active Directory.
+Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.2.0**.
 
 ## Garantie
 
@@ -10,7 +10,7 @@ Le script est conçu en **lecture seule** : aucune création, modification ou su
 
 ### Inventaire
 
-- Users — comptes, groupes directs/recursifs, privileges, dernier logon, verrouillage, mots de passe, UAC, Kerberos, delegation, SPN.
+- Users — **tous les comptes utilisateurs du domaine**, attributs AD renseignés, état Enabled vérifié par UAC, UAC brut et décodé, état calculé du verrouillage et du mot de passe, dernier logon exact recherché sur les DC, dernier logon répliqué, groupes directs/recursifs, privilèges, Kerberos, délégation, SPN, GPO liées et snapshot des attributs AD.
 - Groups — groupes, portée, type, membres directs/recursifs et groupes privilégiés.
 - Computers — OS, connexions, inactivité, delegation et SPN.
 - OUs — OU, protection contre suppression accidentelle et GPO liées.
