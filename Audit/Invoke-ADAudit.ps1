@@ -182,7 +182,15 @@ function ExportResults{
  }
  return @($selected|Select-Object -Unique)
 }
-function Run([string]$n){switch($n){Users{AuditUsers};Groups{AuditGroups};Computers{AuditComputers};OUs{AuditOUs};GPOs{AuditGPOs};Domain{AuditDomain};DCs{AuditDCs};Sites{AuditSites};Trusts{AuditTrusts};DNS{AuditDNS};Delegation{AuditDelegation};SPNs{AuditSPNs};LAPS{AuditLAPS};Health{AuditHealth};Privileged{AuditPrivileged};Kerberos{AuditKerberos};PasswordPolicies{AuditPasswordPolicies};Schema{AuditSchema};ADCS{AuditADCS};RecycleBin{AuditRecycleBin};AdminSDHolder{AuditAdminSDHolder};GPOAnalysis{AuditGPOAnalysis};default{Warn ('Module inconnu: '+$n)}}}
+function Run($n){
+ $names=@($n)
+ if($names.Count -ne 1){throw ('Module invalide: valeur recue de type '+$n.GetType().FullName+' avec '+$names.Count+' element(s).')}
+ $name=[string]$names[0]
+ switch($name){
+  Users{AuditUsers;break};Groups{AuditGroups;break};Computers{AuditComputers;break};OUs{AuditOUs;break};GPOs{AuditGPOs;break};Domain{AuditDomain;break};DCs{AuditDCs;break};Sites{AuditSites;break};Trusts{AuditTrusts;break};DNS{AuditDNS;break};Delegation{AuditDelegation;break};SPNs{AuditSPNs;break};LAPS{AuditLAPS;break};Health{AuditHealth;break};Privileged{AuditPrivileged;break};Kerberos{AuditKerberos;break};PasswordPolicies{AuditPasswordPolicies;break};Schema{AuditSchema;break};ADCS{AuditADCS;break};RecycleBin{AuditRecycleBin;break};AdminSDHolder{AuditAdminSDHolder;break};GPOAnalysis{AuditGPOAnalysis;break}
+  default{throw ('Module inconnu: ['+$name+'] Type='+$names[0].GetType().FullName)}
+ }
+}
 Section ('AD Advanced Audit v'+$Script:AuditVersion)
 if(-not(Cmd Get-ADDomain)){throw 'Le module ActiveDirectory est requis (RSAT).'}
 
@@ -196,8 +204,10 @@ if($PSBoundParameters.ContainsKey('Modules') -and $null -ne $Modules -and @($Mod
 }
 if($SelectedModules.Count -eq 0){throw 'Aucun module selectionne.'}
 New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
-foreach($m in $SelectedModules){
- if([string]::IsNullOrWhiteSpace([string]$m)){continue}
- try{Run $m}catch{Warn ('Module '+$m+' en erreur: '+$_.Exception.Message);Finding High Engine ('Echec du module '+$m) $m $_.Exception.Message 'Verifier les droits, RSAT et la connectivite.'}
+foreach($m in @($SelectedModules)){
+ if($null -eq $m){continue}
+ $moduleName=[string]$m
+ if([string]::IsNullOrWhiteSpace($moduleName)){continue}
+ try{Run $moduleName}catch{Warn ('Module '+$moduleName+' en erreur: '+$_.Exception.Message);Finding High Engine ('Echec du module '+$moduleName) $moduleName $_.Exception.Message 'Verifier les droits, RSAT et la connectivite.'}
 }
 ExportResults;Section 'Fin de l audit';W ('Modules: '+($Script:Results.Keys-join ', '));W ('Findings: '+$Script:Findings.Count);$s=GetAuditSummary;W ('Risk score: '+$s.RiskScore+'/100 ('+$s.RiskLevel+')');W ('Repertoire: '+$OutputPath)
