@@ -1,6 +1,6 @@
 # AD Advanced Audit
 
-Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.3.5**.
+Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.3.6**.
 
 ## Garantie
 
@@ -72,6 +72,7 @@ L'export est conçu pour rester compatible avec Windows PowerShell 5.1 et PowerS
 - la taille du fichier final est affichée après écriture ;
 - aucun fichier intermédiaire de sérialisation n'est créé ;
 - l'encodage UTF-8 est écrit sans BOM ;
+- les attributs binaires AD du snapshot brut sont encodés en Base64 au lieu d'être développés octet par octet ;
 - les résultats AD restent en lecture seule.
 
 Le Viewer n'a pas besoin d'un JSON indenté : il charge directement le JSON compact produit par l'auditeur.
