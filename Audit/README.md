@@ -1,6 +1,6 @@
 # AD Advanced Audit
 
-Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.3.6**.
+Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.4.0**.
 
 ## Garantie
 
@@ -21,6 +21,7 @@ Le script est conçu en **lecture seule** : aucune création, modification ou su
 - Trusts — relations de confiance.
 - DNS — zones DNS.
 - Schema — objets du schema AD.
+- Security — collecte transversale dédiée à l'audit sécurité : marqueurs AdminCount, SPN, délégation, RBCD, SIDHistory, identités alternatives, clés de credential, certificats utilisateurs, types de chiffrement Kerberos, MachineAccountQuota et groupes sensibles.
 
 ### Analyse sécurité
 
