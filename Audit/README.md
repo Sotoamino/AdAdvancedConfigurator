@@ -1,6 +1,6 @@
 # AD Advanced Audit
 
-Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.2.0**.
+Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.3.5**.
 
 ## Garantie
 
@@ -60,6 +60,21 @@ Export HTML :
 Export JSON + HTML :
 
     .\Invoke-ADAudit.ps1 -Mode All -ExportFormat Both
+
+## Export et performances
+
+L'export est conçu pour rester compatible avec Windows PowerShell 5.1 et PowerShell 7, tout en limitant le travail inutile :
+
+- les données sont normalisées une seule fois avant la sérialisation JSON ;
+- les exports JSON et HTML réutilisent la même représentation JSON ;
+- le JSON est généré en mode compact (-Compress) pour réduire la taille et le temps d'écriture ;
+- l'export affiche sa progression et son temps total lorsque la console est active ;
+- la taille du fichier final est affichée après écriture ;
+- aucun fichier intermédiaire de sérialisation n'est créé ;
+- l'encodage UTF-8 est écrit sans BOM ;
+- les résultats AD restent en lecture seule.
+
+Le Viewer n'a pas besoin d'un JSON indenté : il charge directement le JSON compact produit par l'auditeur.
 
 ## Viewer HTML
 
