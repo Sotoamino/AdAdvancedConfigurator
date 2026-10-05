@@ -127,10 +127,11 @@ function AuditUsers{
  if($dcs.Count -eq 0){try{$dcs=@((Get-ADDomain @ADParams).PDCEmulator)}catch{}}
 
  $userProperties=@('Enabled','UserPrincipalName','Name','GivenName','Initials','MiddleName','Surname','DisplayName','ObjectClass','ObjectCategory','UserAccountControl','msDS-User-Account-Control-Computed','DistinguishedName','CanonicalName','ObjectGUID','SID','Description','Department','Title','Company','Division','Office','OfficePhone','MobilePhone','Mail','EmployeeID','EmployeeNumber','Manager','StreetAddress','City','State','PostalCode','Country','CountryCode','HomeDirectory','HomeDrive','ScriptPath','ProfilePath','Created','Modified','WhenCreated','WhenChanged','LastLogonDate','LastLogonTimestamp','lastLogonTimestamp','LastBadPasswordAttempt','BadLogonCount','BadPwdCount','badPasswordTime','lockoutTime','LockedOut','PasswordExpired','PasswordLastSet','pwdLastSet','PasswordNeverExpires','PasswordNotRequired','CannotChangePassword','AccountExpirationDate','accountExpires','SmartcardLogonRequired','DoesNotRequirePreAuth','TrustedForDelegation','TrustedToAuthForDelegation','HomePhone','Fax','Info','wWWHomePage','PrimaryGroupID','MemberOf','ServicePrincipalNames','adminCount');
- $collectTimer=[System.Diagnostics.Stopwatch]::StartNew();Write-ExportProgress 'Audit des utilisateurs' 'Chargement des objets AD...' 0 $collectTimer;
+ $Script:UserAuditIndex=0;$collectTimer=[System.Diagnostics.Stopwatch]::StartNew();Write-ExportProgress 'Audit des utilisateurs' 'Chargement des objets AD...' 0 $collectTimer;
  $x=@(Get-ADUser @ADParams -Filter * -Properties $userProperties|ForEach-Object{
   $u=$_
-  if(-not $NoConsole){Write-Progress -Id 901 -Activity 'Audit des utilisateurs' -Status ('Traitement: '+$u.SamAccountName) -PercentComplete 0}
+  $Script:UserAuditIndex++
+  if(-not $NoConsole){Write-Progress -Id 901 -Activity 'Audit des utilisateurs' -Status ('Traitement: '+$u.SamAccountName+' ('+$Script:UserAuditIndex+')') -PercentComplete 0}
   $uac=[int64]$u.UserAccountControl
   $uacComputed=0
   if($null -ne $u.'msDS-User-Account-Control-Computed'){$uacComputed=[int64]$u.'msDS-User-Account-Control-Computed'}
@@ -469,7 +470,16 @@ function ExportResults{
    $name=[string]$keys[$i]
    $percent=10+[int]((($i+1)/$total)*50)
    Write-ExportProgress 'Export du rapport' ('Normalisation: '+$name+' ('+($i+1)+'/'+$total+')') $percent $timer
+   if($name -eq 'Users'){
+   $items=@($Script:Results[$name]);$userTotal=[Math]::Max(1,$items.Count);$userList=New-Object System.Collections.Generic.List[object]
+   for($ui=0;$ui -lt $items.Count;$ui++){
+    $upct=10+[int]((($ui+1)/$userTotal)*50);Write-ExportProgress 'Export du rapport' ('Normalisation Users: '+($ui+1)+'/'+$userTotal+' - '+[string]$items[$ui].SamAccountName) $upct $timer
+    [void]$userList.Add((ConvertTo-AuditSerializable $items[$ui]))
+   }
+   $serializableResults[$name]=$userList.ToArray()
+  }else{
    $serializableResults[$name]=ConvertTo-AuditSerializable $Script:Results[$name]
+  }
   }
   $report.Results=$serializableResults
 
