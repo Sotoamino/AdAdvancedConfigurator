@@ -88,3 +88,27 @@ Un audit AD peut contenir des noms, UPN, groupes privilegies, structure OU, SPN,
 - contrôles CIS / ANSSI avec evidence ;
 - chemins d'administration tiering ;
 - permissions dangereuses sur objets AD.
+
+
+## Scoring et recommandations
+
+Depuis la v1.1.0, chaque finding reçoit un score de risque :
+- Critical : 25 points
+- High : 15 points
+- Medium : 7 points
+- Low : 2 points
+- Info : 0 point
+
+Le RiskScore global est plafonné à 100 et accompagné d'un niveau None / Low / Medium / High / Critical. Les recommandations sont conservées avec chaque finding et un Top 10 des recommandations est ajouté au résumé.
+
+Le rapport peut être exporté en JSON, HTML ou Both.
+
+Exemple :
+
+    .\Invoke-ADAudit.ps1 -Mode All -ExportFormat Both
+
+### Garantie de non-modification
+
+Le moteur d'audit utilise uniquement des opérations de lecture sur l'AD, la forêt, les GPO, les ACL, DNS et les objets de configuration. Il ne crée, modifie, supprime, désactive ou réinitialise aucun objet AD.
+
+La seule écriture locale effectuée par le script correspond aux fichiers de rapport demandés dans -OutputPath. Aucun module, service, tâche planifiée, variable système ou configuration Windows n'est installé ou modifié.
