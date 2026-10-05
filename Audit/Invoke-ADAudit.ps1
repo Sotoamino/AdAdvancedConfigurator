@@ -11,10 +11,10 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.3.6';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.4.0';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
- Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
+ Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie';Security='Collecte sécurité approfondie'
 }
 function W([string]$s){if(-not $NoConsole){Write-Host $s}}
 function Section([string]$s){W '';W ('='*78);W ('  '+$s);W ('='*78)}
@@ -303,6 +303,70 @@ function AuditKerberos{
  }
  Ok ($rows.Count.ToString()+' comptes et ordinateurs sensibles.')
 }
+function AuditSecurity{
+ Section 'Collecte securite approfondie'
+ $rows=New-Object System.Collections.Generic.List[object]
+ $users=@(Get-ADUser @ADParams -Filter * -Properties adminCount,servicePrincipalName,'msDS-SupportedEncryptionTypes','msDS-AllowedToDelegateTo','msDS-AllowedToActOnBehalfOfOtherIdentity',sIDHistory,altSecurityIdentities,'msDS-KeyCredentialLink',userCertificate,userAccountControl,pwdLastSet,accountExpires,primaryGroupID,adminDisplayName,description,Enabled)
+ foreach($u in $users){
+  $uac=[int64]$u.UserAccountControl
+  $sidHistory=@($u.sIDHistory)
+  $spns=@($u.ServicePrincipalName)
+  $deleg=@($u.'msDS-AllowedToDelegateTo')
+  $keyCred=@($u.'msDS-KeyCredentialLink')
+  $certs=@($u.userCertificate)
+  $adminCount=($null -ne $u.adminCount -and [int]$u.adminCount -eq 1)
+  $risky=$adminCount -or $spns.Count -gt 0 -or $deleg.Count -gt 0 -or $sidHistory.Count -gt 0 -or $keyCred.Count -gt 0 -or $certs.Count -gt 0
+  if($risky){
+   [void]$rows.Add([pscustomobject]@{
+    ObjectType='User';Account=$u.SamAccountName;Enabled=$u.Enabled;AdminCount=$u.adminCount;PrivilegedMarker=$adminCount
+    SPNCount=$spns.Count;SPNs=($spns -join ' | ');ConstrainedDelegationTargets=($deleg -join ' | ')
+    SIDHistoryPresent=($sidHistory.Count -gt 0);SIDHistoryCount=$sidHistory.Count
+    AltSecurityIdentitiesPresent=(@($u.altSecurityIdentities).Count -gt 0)
+    KeyCredentialLinkPresent=($keyCred.Count -gt 0);UserCertificatePresent=($certs.Count -gt 0)
+    SupportedEncryptionTypes=$u.'msDS-SupportedEncryptionTypes';UserAccountControl=$uac
+    PasswordLastSet=$u.PasswordLastSet;AccountExpirationDate=$u.AccountExpirationDate;PrimaryGroupID=$u.PrimaryGroupID
+    DistinguishedName=$u.DistinguishedName
+   })
+  }
+  if($sidHistory.Count -gt 0){Finding High Security 'SIDHistory present sur un compte' $u.SamAccountName ($sidHistory.Count.ToString()+' entree(s) SIDHistory.') 'Verifier chaque SID historique et sa necessite.'}
+  if($keyCred.Count -gt 0){Finding Medium Security 'Credential key presente' $u.SamAccountName 'msDS-KeyCredentialLink est present.' 'Verifier les Windows Hello for Business/FIDO et les identites attendues.'}
+  if($u.altSecurityIdentities){Finding Medium Security 'Identite alternative configuree' $u.SamAccountName 'altSecurityIdentities est renseigne.' 'Verifier l usage de certificats et la chaine de confiance.'}
+ }
+ $computers=@(Get-ADComputer @ADParams -Filter * -Properties adminCount,'msDS-SupportedEncryptionTypes','msDS-AllowedToDelegateTo','msDS-AllowedToActOnBehalfOfOtherIdentity',sIDHistory,servicePrincipalName,userCertificate,userAccountControl,pwdLastSet,primaryGroupID,Enabled,OperatingSystem,OperatingSystemVersion)
+ foreach($co in $computers){
+  $sidHistory=@($co.sIDHistory);$spns=@($co.ServicePrincipalName);$deleg=@($co.'msDS-AllowedToDelegateTo');$rbcd=$null -ne $co.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+  $adminCount=($null -ne $co.adminCount -and [int]$co.adminCount -eq 1)
+  $risky=$adminCount -or $co.TrustedForDelegation -or $co.TrustedToAuthForDelegation -or $deleg.Count -gt 0 -or $rbcd -or $sidHistory.Count -gt 0
+  if($risky){
+   [void]$rows.Add([pscustomobject]@{
+    ObjectType='Computer';Account=$co.Name;Enabled=$co.Enabled;AdminCount=$co.adminCount;PrivilegedMarker=$adminCount
+    SPNCount=$spns.Count;SPNs=($spns -join ' | ');UnconstrainedDelegation=$co.TrustedForDelegation;ProtocolTransition=$co.TrustedToAuthForDelegation
+    ConstrainedDelegationTargets=($deleg -join ' | ');RBCDPresent=$rbcd;SIDHistoryPresent=($sidHistory.Count -gt 0);SIDHistoryCount=$sidHistory.Count
+    SupportedEncryptionTypes=$co.'msDS-SupportedEncryptionTypes';UserAccountControl=$co.UserAccountControl
+    PasswordLastSet=$co.PasswordLastSet;OperatingSystem=$co.OperatingSystem;OperatingSystemVersion=$co.OperatingSystemVersion
+    DistinguishedName=$co.DistinguishedName
+   })
+  }
+  if($sidHistory.Count -gt 0){Finding High Security 'SIDHistory present sur un ordinateur' $co.Name ($sidHistory.Count.ToString()+' entree(s) SIDHistory.') 'Verifier chaque SID historique.'}
+  if($rbcd){Finding Medium Security 'RBCD configuree' $co.Name 'msDS-AllowedToActOnBehalfOfOtherIdentity est present.' 'Verifier les principals autorises.'}
+ }
+ $d=Get-ADDomain @ADParams
+ $root=(Get-ADRootDSE @ADParams)
+ $machineQuota=$null
+ try{$machineQuota=(Get-ADObject @ADParams -Identity $root.defaultNamingContext -Properties 'ms-DS-MachineAccountQuota').'ms-DS-MachineAccountQuota'}catch{}
+ $securityRoot=[pscustomobject]@{
+  Domain=$d.DNSRoot;NetBIOSName=$d.NetBIOSName;DomainSID=$d.DomainSID.Value
+  MachineAccountQuota=$machineQuota;DomainFunctionalLevel=$d.DomainMode
+  ForestFunctionalLevel=(Get-ADForest @ADParams).ForestMode
+  DefaultNamingContext=$root.defaultNamingContext;ConfigurationNamingContext=$root.configurationNamingContext
+  SchemaNamingContext=$root.schemaNamingContext;RootDomainNamingContext=$root.rootDomainNamingContext
+ }
+ $Script:Results.SecurityAccounts=@($rows)
+ $Script:Results.SecurityDomain=@($securityRoot)
+ Ok ($rows.Count.ToString()+' objets a interet securite eleve collectes.')
+ Ok 'Parametres de securite structurels du domaine collectes.'
+}
+
 function AuditPasswordPolicies{
  Section 'Audit des politiques de mots de passe';$p=Get-ADDefaultDomainPasswordPolicy @ADParams;$rows=@([pscustomobject]@{Type='DefaultDomain';Name='Default Domain Policy';MinPasswordLength=$p.MinPasswordLength;PasswordHistoryCount=$p.PasswordHistoryCount;ComplexityEnabled=$p.ComplexityEnabled;MaxPasswordAge=$p.MaxPasswordAge;MinPasswordAge=$p.MinPasswordAge;LockoutThreshold=$p.LockoutThreshold});if(Cmd Get-ADFineGrainedPasswordPolicy){$rows+=@(Get-ADFineGrainedPasswordPolicy @ADParams -Filter * -Properties *|%{[pscustomobject]@{Type='FineGrained';Name=$_.Name;Precedence=$_.Precedence;MinPasswordLength=$_.MinPasswordLength;PasswordHistoryCount=$_.PasswordHistoryCount;ComplexityEnabled=$_.ComplexityEnabled;MaxPasswordAge=$_.MaxPasswordAge;LockoutThreshold=$_.LockoutThreshold;AppliesTo=(@($_.AppliesTo)-join ' | ')}})};$Script:Results.PasswordPolicies=$rows;Ok ($rows.Count.ToString()+' politiques.')
 }
@@ -455,7 +519,7 @@ function Run($n){
  if($names.Count -ne 1){throw ('Module invalide: valeur recue de type '+$n.GetType().FullName+' avec '+$names.Count+' element(s).')}
  $name=[string]$names[0]
  switch($name){
-  Users{AuditUsers;break};Groups{AuditGroups;break};Computers{AuditComputers;break};OUs{AuditOUs;break};GPOs{AuditGPOs;break};Domain{AuditDomain;break};DCs{AuditDCs;break};Sites{AuditSites;break};Trusts{AuditTrusts;break};DNS{AuditDNS;break};Delegation{AuditDelegation;break};SPNs{AuditSPNs;break};LAPS{AuditLAPS;break};Health{AuditHealth;break};Privileged{AuditPrivileged;break};Kerberos{AuditKerberos;break};PasswordPolicies{AuditPasswordPolicies;break};Schema{AuditSchema;break};ADCS{AuditADCS;break};RecycleBin{AuditRecycleBin;break};AdminSDHolder{AuditAdminSDHolder;break};GPOAnalysis{AuditGPOAnalysis;break}
+  Users{AuditUsers;break};Groups{AuditGroups;break};Computers{AuditComputers;break};OUs{AuditOUs;break};GPOs{AuditGPOs;break};Domain{AuditDomain;break};DCs{AuditDCs;break};Sites{AuditSites;break};Trusts{AuditTrusts;break};DNS{AuditDNS;break};Delegation{AuditDelegation;break};SPNs{AuditSPNs;break};LAPS{AuditLAPS;break};Health{AuditHealth;break};Privileged{AuditPrivileged;break};Kerberos{AuditKerberos;break};PasswordPolicies{AuditPasswordPolicies;break};Security{AuditSecurity;break};Schema{AuditSchema;break};ADCS{AuditADCS;break};RecycleBin{AuditRecycleBin;break};AdminSDHolder{AuditAdminSDHolder;break};GPOAnalysis{AuditGPOAnalysis;break}
   default{throw ('Module inconnu: ['+$name+'] Type='+$names[0].GetType().FullName)}
  }
 }
