@@ -1,6 +1,6 @@
 # AD Advanced Audit
 
-Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.5.1**.
+Framework PowerShell d'audit et d'analyse approfondie d'Active Directory. Version actuelle : **1.5.2**.
 
 ## Garantie
 
