@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.5.1';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.5.2';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie';Security='Collecte sécurité approfondie'
@@ -126,8 +126,11 @@ function AuditUsers{
  if($dcs.Count -eq 0 -and $DomainController){$dcs=@($DomainController)}
  if($dcs.Count -eq 0){try{$dcs=@((Get-ADDomain @ADParams).PDCEmulator)}catch{}}
 
- $x=@(Get-ADUser @ADParams -Filter * -Properties *,msDS-User-Account-Control-Computed,adminCount|ForEach-Object{
+ $userProperties=@('Enabled','UserPrincipalName','Name','GivenName','Initials','MiddleName','Surname','DisplayName','ObjectClass','ObjectCategory','UserAccountControl','msDS-User-Account-Control-Computed','DistinguishedName','CanonicalName','ObjectGUID','SID','Description','Department','Title','Company','Division','Office','OfficePhone','MobilePhone','Mail','EmployeeID','EmployeeNumber','Manager','StreetAddress','City','State','PostalCode','Country','CountryCode','HomeDirectory','HomeDrive','ScriptPath','ProfilePath','Created','Modified','WhenCreated','WhenChanged','LastLogonDate','LastLogonTimestamp','lastLogonTimestamp','LastBadPasswordAttempt','BadLogonCount','BadPwdCount','badPasswordTime','lockoutTime','LockedOut','PasswordExpired','PasswordLastSet','pwdLastSet','PasswordNeverExpires','PasswordNotRequired','CannotChangePassword','AccountExpirationDate','accountExpires','SmartcardLogonRequired','DoesNotRequirePreAuth','TrustedForDelegation','TrustedToAuthForDelegation','HomePhone','Fax','Info','wWWHomePage','PrimaryGroupID','MemberOf','ServicePrincipalNames','adminCount');
+ $collectTimer=[System.Diagnostics.Stopwatch]::StartNew();Write-ExportProgress 'Audit des utilisateurs' 'Chargement des objets AD...' 0 $collectTimer;
+ $x=@(Get-ADUser @ADParams -Filter * -Properties $userProperties|ForEach-Object{
   $u=$_
+  if(-not $NoConsole){Write-Progress -Id 901 -Activity 'Audit des utilisateurs' -Status ('Traitement: '+$u.SamAccountName) -PercentComplete 0}
   $uac=[int64]$u.UserAccountControl
   $uacComputed=0
   if($null -ne $u.'msDS-User-Account-Control-Computed'){$uacComputed=[int64]$u.'msDS-User-Account-Control-Computed'}
@@ -162,11 +165,12 @@ function AuditUsers{
    Groups=($gn -join ' | ');GroupCount=$gn.Count;PrivilegedGroups=(($priv|Select-Object -ExpandProperty Name)-join ' | ');PrivilegedGroupCount=$priv.Count;IsPrivileged=($priv.Count -gt 0)
    ServicePrincipalNames=(@($u.ServicePrincipalNames)-join ' | ');SPNCount=@($u.ServicePrincipalNames).Count
    LinkedGPOs=($linkedGPOs -join ' | ');LinkedGPOCount=$linkedGPOs.Count
-   DistinguishedNameParent=($u.DistinguishedName -replace '^CN=[^,]+,','');RawADAttributes=(Get-ADUserRawAttributes $u)
+   DistinguishedNameParent=($u.DistinguishedName -replace '^CN=[^,]+,','')
   }
  })
+ if(-not $NoConsole){Write-Progress -Id 901 -Activity 'Audit des utilisateurs' -Completed}
+ $collectTimer.Stop();Ok ($x.Count.ToString()+' utilisateurs audites. Collecte Users: '+$collectTimer.Elapsed.ToString('hh\:mm\:ss'))
  $Script:Results.Users=$x
- Ok ($x.Count.ToString()+' utilisateurs audites.')
 }
 
 function AuditGroups{
