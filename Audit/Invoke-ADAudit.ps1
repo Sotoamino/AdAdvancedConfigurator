@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.1.0';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.2.0';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -26,11 +26,19 @@ function Finding{param([string]$Severity,[string]$Category,[string]$Title,[strin
  [void]$Script:Findings.Add([pscustomobject]@{Severity=$Severity;Category=$Category;Title=$Title;Object=$Object;Details=$Details;Recommendation=$Recommendation})
 }
 function PrivGroups{@('Domain Admins','Enterprise Admins','Schema Admins','Administrators','Account Operators','Server Operators','Backup Operators','Print Operators','DnsAdmins','Group Policy Creator Owners','Key Admins','Enterprise Key Admins','Protected Users','Cert Publishers')}
-function AccountType([int]$u){
- $f=@();if($u-band 2){$f+='ACCOUNTDISABLE'};if($u-band 32){$f+='PASSWD_NOTREQD'};if($u-band 512){$f+='NORMAL_ACCOUNT'}
- if($u-band 4096){$f+='INTERDOMAIN_TRUST_ACCOUNT'};if($u-band 8192){$f+='WORKSTATION_TRUST_ACCOUNT'};if($u-band 16384){$f+='SERVER_TRUST_ACCOUNT'}
- if($u-band 524288){$f+='TRUSTED_FOR_DELEGATION'};if($u-band 1048576){$f+='NOT_DELEGATED'};if($u-band 4194304){$f+='DONT_REQ_PREAUTH'}
- if($u-band 8388608){$f+='PASSWORD_EXPIRED'};if($u-band 16777216){$f+='TRUSTED_TO_AUTH_FOR_DELEGATION'};($f -join ',')
+function AccountType([int64]$u){
+ $f=New-Object System.Collections.Generic.List[string]
+ $map=@(
+  @{Bit=1;Name='SCRIPT'},@{Bit=2;Name='ACCOUNTDISABLE'},@{Bit=8;Name='HOMEDIR_REQUIRED'},@{Bit=16;Name='LOCKOUT'},
+  @{Bit=32;Name='PASSWD_NOTREQD'},@{Bit=64;Name='PASSWD_CANT_CHANGE'},@{Bit=128;Name='ENCRYPTED_TEXT_PASSWORD_ALLOWED'},
+  @{Bit=256;Name='TEMP_DUPLICATE_ACCOUNT'},@{Bit=512;Name='NORMAL_ACCOUNT'},@{Bit=2048;Name='INTERDOMAIN_TRUST_ACCOUNT'},
+  @{Bit=4096;Name='WORKSTATION_TRUST_ACCOUNT'},@{Bit=8192;Name='SERVER_TRUST_ACCOUNT'},@{Bit=65536;Name='DONT_EXPIRE_PASSWORD'},
+  @{Bit=131072;Name='MNS_LOGON_ACCOUNT'},@{Bit=262144;Name='SMARTCARD_REQUIRED'},@{Bit=524288;Name='TRUSTED_FOR_DELEGATION'},
+  @{Bit=1048576;Name='NOT_DELEGATED'},@{Bit=2097152;Name='USE_DES_KEY_ONLY'},@{Bit=4194304;Name='DONT_REQ_PREAUTH'},
+  @{Bit=8388608;Name='PASSWORD_EXPIRED'},@{Bit=16777216;Name='TRUSTED_TO_AUTH_FOR_DELEGATION'},@{Bit=67108864;Name='PARTIAL_SECRETS_ACCOUNT'}
+ )
+ foreach($item in $map){if(($u -band [int64]$item.Bit) -ne 0){[void]$f.Add($item.Name)}}
+ $f -join ','
 }
 function Recurse([string]$dn){try{@(Get-ADGroupMember @ADParams -Identity $dn -Recursive -ErrorAction Stop)}catch{Warn ('Membres recursifs indisponibles: '+$dn+' / '+$_.Exception.Message);@()}}
 function Get-UserLinkedGPOs([string]$UserDN){
@@ -55,24 +63,67 @@ function Get-UserLinkedGPOs([string]$UserDN){
  return @($result|Select-Object -Unique)
 }
 
+function Get-UserLastLogonAccurate([string]$UserDN,[object[]]$DomainControllers){
+ $bestDate=$null;$bestDC=$null;$bestRaw=0
+ foreach($dc in @($DomainControllers)){
+  try{
+   $u=Get-ADUser -Server $dc -Identity $UserDN -Properties lastLogon -ErrorAction Stop
+   $raw=0
+   if($null -ne $u.lastLogon){$raw=[int64]$u.lastLogon}
+   if($raw -gt $bestRaw){
+    $bestRaw=$raw;$bestDC=[string]$dc
+    if($raw -gt 0){$bestDate=[DateTime]::FromFileTimeUtc($raw).ToLocalTime()}
+   }
+  }catch{}
+ }
+ [pscustomobject]@{LastLogon=$bestDate;LastLogonRaw=$bestRaw;LastLogonDC=$bestDC}
+}
+
 function AuditUsers{
  Section 'Audit des utilisateurs'
+ $dcs=@()
+ try{$dcs=@(Get-ADDomainController -Filter * @ADParams|Select-Object -ExpandProperty HostName)}catch{}
+ if($dcs.Count -eq 0 -and $DomainController){$dcs=@($DomainController)}
+ if($dcs.Count -eq 0){try{$dcs=@((Get-ADDomain @ADParams).PDCEmulator)}catch{}}
+
  $x=@(Get-ADUser @ADParams -Filter * -Properties *|ForEach-Object{
-  $g=@(Get-ADPrincipalGroupMembership @ADParams -Identity $_.DistinguishedName -ErrorAction SilentlyContinue)
+  $u=$_
+  $uac=[int64]$u.UserAccountControl
+  $uacComputed=0
+  if($null -ne $u.'msDS-User-Account-Control-Computed'){$uacComputed=[int64]$u.'msDS-User-Account-Control-Computed'}
+  $enabledByUAC=(($uac -band 2) -eq 0)
+  $lockedByComputed=(($uacComputed -band 16) -ne 0)
+  $expiredByComputed=(($uacComputed -band 8388608) -ne 0)
+  $g=@(Get-ADPrincipalGroupMembership @ADParams -Identity $u.DistinguishedName -ErrorAction SilentlyContinue)
   $gn=@($g|Select-Object -ExpandProperty Name)
   $priv=@($g|Where-Object {$_.Name -in (PrivGroups)})
-  $linkedGPOs=Get-UserLinkedGPOs $_.DistinguishedName
+  $linkedGPOs=Get-UserLinkedGPOs $u.DistinguishedName
+  $accurateLogon=Get-UserLastLogonAccurate $u.DistinguishedName $dcs
+
   [pscustomobject]@{
-   SamAccountName=$_.SamAccountName;UserPrincipalName=$_.UserPrincipalName;Name=$_.Name;GivenName=$_.GivenName;Surname=$_.Surname;DisplayName=$_.DisplayName
-   Enabled=$_.Enabled;AccountType=(AccountType $_.UserAccountControl);UserAccountControl=$_.UserAccountControl
-   DistinguishedName=$_.DistinguishedName;CanonicalName=$_.CanonicalName;Description=$_.Description;Department=$_.Department;Title=$_.Title;Company=$_.Company;EmailAddress=$_.Mail;EmployeeId=$_.EmployeeID
-   Created=$_.Created;Modified=$_.Modified;LastLogonDate=$_.LastLogonDate;LastLogonTimestamp=$_.LastLogonTimestamp
-   LastBadPasswordAttempt=$_.LastBadPasswordAttempt;BadLogonCount=$_.BadLogonCount;BadPwdCount=$_.BadPwdCount;LockedOut=$_.LockedOut
-   PasswordLastSet=$_.PasswordLastSet;PasswordExpired=$_.PasswordExpired;PasswordNeverExpires=$_.PasswordNeverExpires;PasswordNotRequired=$_.PasswordNotRequired
-   CannotChangePassword=$_.CannotChangePassword;AccountExpirationDate=$_.AccountExpirationDate;SmartcardLogonRequired=$_.SmartcardLogonRequired
-   DoesNotRequirePreAuth=$_.DoesNotRequirePreAuth;TrustedForDelegation=$_.TrustedForDelegation;TrustedToAuthForDelegation=$_.TrustedToAuthForDelegation
-   Groups=($gn -join ' | ');PrivilegedGroups=(($priv|Select-Object -ExpandProperty Name)-join ' | ');IsPrivileged=($priv.Count -gt 0)
-   ServicePrincipalNames=(@($_.ServicePrincipalNames)-join ' | ');SID=$_.SID.Value;LinkedGPOs=($linkedGPOs -join ' | ')
+   SamAccountName=$u.SamAccountName;UserPrincipalName=$u.UserPrincipalName;Name=$u.Name;GivenName=$u.GivenName;Initials=$u.Initials;MiddleName=$u.MiddleName;Surname=$u.Surname;DisplayName=$u.DisplayName
+   Enabled=$enabledByUAC;EnabledFromADModule=$u.Enabled;StatusConsistency=($enabledByUAC -eq [bool]$u.Enabled)
+   AccountType=(AccountType $uac);ObjectClass=($u.ObjectClass -join ',');ObjectCategory=$u.ObjectCategory
+   UserAccountControl=$uac;UserAccountControlHex=('0x{0:X8}' -f $uac);UserAccountControlFlags=(AccountType $uac)
+   UserAccountControlComputed=$uacComputed;UserAccountControlComputedHex=('0x{0:X8}' -f $uacComputed)
+   DistinguishedName=$u.DistinguishedName;CanonicalName=$u.CanonicalName;ObjectGUID=$u.ObjectGUID.Guid;SID=$u.SID.Value
+   Description=$u.Description;Department=$u.Department;Title=$u.Title;Company=$u.Company;Division=$u.Division;Office=$u.Office;OfficePhone=$u.OfficePhone;MobilePhone=$u.MobilePhone;EmailAddress=$u.Mail;EmployeeId=$u.EmployeeID;EmployeeNumber=$u.EmployeeNumber;Manager=$u.Manager
+   StreetAddress=$u.StreetAddress;City=$u.City;State=$u.State;PostalCode=$u.PostalCode;Country=$u.Country;CountryCode=$u.CountryCode
+   HomeDirectory=$u.HomeDirectory;HomeDrive=$u.HomeDrive;ScriptPath=$u.ScriptPath;ProfilePath=$u.ProfilePath
+   Created=$u.Created;Modified=$u.Modified;WhenCreated=$u.WhenCreated;WhenChanged=$u.WhenChanged
+   LastLogon=$accurateLogon.LastLogon;LastLogonRaw=$accurateLogon.LastLogonRaw;LastLogonDC=$accurateLogon.LastLogonDC
+   LastLogonDate=$u.LastLogonDate;LastLogonTimestamp=$u.LastLogonTimestamp;LastLogonTimestampRaw=$u.lastLogonTimestamp
+   LastBadPasswordAttempt=$u.LastBadPasswordAttempt;BadLogonCount=$u.BadLogonCount;BadPwdCount=$u.BadPwdCount;BadPasswordTime=$u.badPasswordTime;LockoutTime=$u.lockoutTime
+   LockedOut=$lockedByComputed;LockedOutFromADModule=$u.LockedOut;PasswordExpired=$expiredByComputed;PasswordExpiredFromADModule=$u.PasswordExpired
+   PasswordLastSet=$u.PasswordLastSet;PwdLastSetRaw=$u.pwdLastSet;PasswordNeverExpires=$u.PasswordNeverExpires;PasswordNotRequired=$u.PasswordNotRequired;CannotChangePassword=$u.CannotChangePassword
+   AccountExpirationDate=$u.AccountExpirationDate;AccountExpiresRaw=$u.accountExpires;SmartcardLogonRequired=$u.SmartcardLogonRequired
+   DoesNotRequirePreAuth=$u.DoesNotRequirePreAuth;TrustedForDelegation=$u.TrustedForDelegation;TrustedToAuthForDelegation=$u.TrustedToAuthForDelegation
+   HomePhone=$u.HomePhone;Fax=$u.Fax;Info=$u.Info;WebPage=$u.wWWHomePage
+   PrimaryGroupID=$u.PrimaryGroupID;MemberOf=(@($u.MemberOf)-join ' | ')
+   Groups=($gn -join ' | ');GroupCount=$gn.Count;PrivilegedGroups=(($priv|Select-Object -ExpandProperty Name)-join ' | ');PrivilegedGroupCount=$priv.Count;IsPrivileged=($priv.Count -gt 0)
+   ServicePrincipalNames=(@($u.ServicePrincipalNames)-join ' | ');SPNCount=@($u.ServicePrincipalNames).Count
+   LinkedGPOs=($linkedGPOs -join ' | ');LinkedGPOCount=$linkedGPOs.Count
+   DistinguishedNameParent=($u.DistinguishedName -replace '^CN=[^,]+,','')
   }
  })
  $Script:Results.Users=$x
