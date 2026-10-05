@@ -1,59 +1,90 @@
 # AD Advanced Audit
 
-Framework PowerShell modulaire d'audit Active Directory en lecture seule.
+Framework PowerShell d'audit et d'analyse approfondie d'Active Directory.
+
+## Garantie
+
+Le script est concu en **lecture seule** : aucune creation, modification ou suppression d'objet AD, GPO, DNS, ACL, compte ou groupe. Un seul fichier de sortie maximum est produit par execution : `AD-Audit.json` (ou `AD-Audit.html` si HTML est choisi).
 
 ## Modules
 
-- Users — comptes, groupes directs/récursifs, type de compte, privilèges, dernier logon, verrouillage, expiration, mot de passe, UAC, Kerberos, délégation et SPN.
-- Groups — groupes, portée, type, membres directs/récursifs, groupes privilégiés.
-- Computers — OS, connexions, inactivité, délégation et SPN.
-- OUs — OU, protection contre suppression accidentelle et GPO liées.
-- GPOs — inventaire des GPO et rapports XML avec `-IncludeGPOReports`.
-- Domain — domaine/forêt, niveaux fonctionnels et stratégie de mots de passe/verrouillage.
-- DCs — contrôleurs de domaine, GC, RODC, site et OS.
-- Sites — sites, subnets et site links.
+### Inventaire
+
+- Users — comptes, groupes directs/recursifs, privileges, dernier logon, verrouillage, mots de passe, UAC, Kerberos, delegation, SPN.
+- Groups — groupes, portee, type, membres directs/recursifs et groupes privilegies.
+- Computers — OS, connexions, inactivite, delegation et SPN.
+- OUs — OU, protection contre suppression accidentelle et GPO liees.
+- GPOs — inventaire GPO et etat.
+- Domain — domaine/foret et politique de mots de passe.
+- DCs — controleurs de domaine.
+- Sites — sites, subnets et liens.
 - Trusts — relations de confiance.
-- DNS — zones DNS si le module DnsServer est disponible.
-- Delegation — ACE de la racine du domaine.
-- SPNs — SPN portés par les utilisateurs.
+- DNS — zones DNS.
+- Schema — objets du schema AD.
+
+### Analyse securite
+
+- Privileged — groupes sensibles et membres recursifs.
+- Kerberos — AS-REP roastable, delegation non contrainte, comptes portant des SPN.
+- PasswordPolicies — politique de domaine et FGPP.
 - LAPS — couverture Legacy LAPS / Windows LAPS.
-- Health — métadonnées de réplication et échecs.
+- AdminSDHolder — ACL du conteneur de protection des comptes privilegies.
+- Delegation — ACL de la racine du domaine.
+- ADCS — detection des objets AD CS / templates.
+- RecycleBin — etat de la corbeille AD.
+- Health — replication AD.
+- GPOAnalysis — analyse de plusieurs parametres sensibles dans les rapports GPO.
 
 ## Utilisation
 
-`.Invoke-ADAudit.ps1` — mode interactif.
+Mode interactif :
 
-`.Invoke-ADAudit.ps1 -Mode All` — tous les modules.
+    .\Invoke-ADAudit.ps1
 
-`.Invoke-ADAudit.ps1 -Modules Users,Groups,GPOs,Domain,Health` — sélection non interactive.
+Tout auditer :
 
-`.Invoke-ADAudit.ps1 -Modules Users,Groups -ExportFormat All` — CSV + JSON + HTML.
+    .\Invoke-ADAudit.ps1 -Mode All
 
-`.Invoke-ADAudit.ps1 -Modules GPOs -IncludeGPOReports` — inventaire GPO + rapports XML.
+Selection directe :
 
-`.Invoke-ADAudit.ps1 -Modules Users,Groups -DomainController dc01.contoso.local` — cibler un DC.
+    .\Invoke-ADAudit.ps1 -Modules Users,Groups,Kerberos,GPOAnalysis,Health
 
-## Prérequis
+Cibler un DC :
+
+    .\Invoke-ADAudit.ps1 -Modules Users,Groups,Health -DomainController dc01.example.local
+
+Export HTML unique :
+
+    .\Invoke-ADAudit.ps1 -Mode All -ExportFormat HTML
+
+## Findings
+
+Les anomalies sont centralisees dans `Findings` avec Severity, Category, Title, Object, Details et Recommendation. Les niveaux vont de Critical a Info.
+
+Les findings sont des indications d'audit : ils doivent etre valides avec le contexte de l'environnement.
+
+## Prerequis
 
 - Windows PowerShell 5.1 ou PowerShell 7.
-- RSAT / module ActiveDirectory.
+- RSAT Active Directory / module ActiveDirectory.
 - GroupPolicy pour les GPO.
 - DnsServer pour DNS.
 - Droits de lecture suffisants.
 
-## Sécurité
+## Donnees sensibles
 
-Le framework est **read-only** : il n'utilise pas de cmdlets de création, modification ou suppression AD.
+Un audit AD peut contenir des noms, UPN, groupes privilegies, structure OU, SPN, configuration de securite et informations PKI. Ne publiez jamais un export issu d'une infrastructure reelle dans un depot public.
 
-Les exports peuvent contenir des données sensibles. Ne publiez jamais un export réel d'AD dans un dépôt public.
+## Evolutions
 
-## Roadmap
-
-- Analyse détaillée des paramètres GPO.
-- Détection avancée des délégations ACL dangereuses.
-- Audit Kerberos approfondi.
-- Audit AD CS / PKI.
-- DNS avancé.
-- Score de sécurité et priorisation.
-- Comparaison entre deux audits.
-- Rapport HTML interactif.
+- analyse complete des parametres GPO ;
+- analyse ACL avancee avec chemins d'escalade ;
+- analyse des comptes de service ;
+- audit Kerberos approfondi ;
+- audit AD CS complet ;
+- analyse DNS avancee ;
+- scoring RSSI ;
+- comparaison de deux audits ;
+- contrôles CIS / ANSSI avec evidence ;
+- chemins d'administration tiering ;
+- permissions dangereuses sur objets AD.
