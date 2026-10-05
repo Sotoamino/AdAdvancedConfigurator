@@ -4,7 +4,7 @@ param(
  [ValidateSet('Interactive','All')][string]$Mode='Interactive',
  [string[]]$Modules,
  [string]$OutputPath=(Join-Path $PWD ('AD-Audit-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))),
- [ValidateSet('CSV','JSON','HTML','All')][string]$ExportFormat='All',
+ [ValidateSet('JSON','HTML')][string]$ExportFormat='JSON',
  [string]$DomainController,
  [switch]$IncludeGPOReports,[switch]$NoConsole
 )
@@ -14,10 +14,7 @@ $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
 $Script:AuditVersion='1.0.0';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
- Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles'
- GPOs='GPO';Domain='Domaine et politique de mots de passe';DCs='Controleurs de domaine'
- Sites='Sites, subnets et liens';Trusts='Relations de confiance';DNS='DNS'
- Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante de replication'
+ Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
 }
 function W([string]$s){if(-not $NoConsole){Write-Host $s}}
 function Section([string]$s){W '';W ('='*78);W ('  '+$s);W ('='*78)}
@@ -124,23 +121,39 @@ function AuditDNS{
 function AuditHealth{
  Section 'Audit de la sante AD';$x=@();if(Cmd Get-ADReplicationPartnerMetadata){try{$x=@(Get-ADDomainController -Filter * @ADParams|%{Get-ADReplicationPartnerMetadata -Target $_.HostName -Scope Server -ErrorAction SilentlyContinue|select Server,Partner,LastReplicationSuccess,LastReplicationResult,ConsecutiveReplicationFailures,LastReplicationAttempt});foreach($z in $x){if($z.ConsecutiveReplicationFailures-gt 0-or $z.LastReplicationResult-ne 0){Finding High Health 'Echec de replication AD' (($z.Server)+' -> '+($z.Partner)) ('Resultat='+$z.LastReplicationResult+'; echecs='+$z.ConsecutiveReplicationFailures) 'Analyser DNS, RPC, Kerberos et les journaux AD.'}}}catch{Warn ('Replication indisponible: '+$_.Exception.Message)}};$Script:Results.Health=$x;Ok ($x.Count.ToString()+' relations de replication.')
 }
+function AuditPrivileged{
+ Section 'Audit des privileges';$rows=@();foreach($name in (PrivGroups)){try{$g=Get-ADGroup @(ADParams) -Identity $name -Properties *;$m=@(Get-ADGroupMember @(ADParams) -Identity $g.DistinguishedName -Recursive -ErrorAction SilentlyContinue);$rows+=[pscustomobject]@{Group=$name;Exists=$true;MemberCount=$m.Count;Members=(($m|select -Expand Name)-join ' | ');DistinguishedName=$g.DistinguishedName};if($m.Count){Finding Medium Privileged ('Groupe privilegie: '+$name) $name ($m.Count.ToString()+' membre(s).') 'Verifier les membres.'}}catch{$rows+=[pscustomobject]@{Group=$name;Exists=$false;MemberCount=0;Members='';DistinguishedName=''}}};$Script:Results.Privileged=$rows;Ok ($rows.Count.ToString()+' groupes sensibles verifies.')
+}
+function AuditKerberos{
+ Section 'Audit Kerberos';$rows=@(Get-ADUser @(ADParams) -Filter * -Properties DoesNotRequirePreAuth,TrustedForDelegation,TrustedToAuthForDelegation,ServicePrincipalName,Enabled,PasswordLastSet|%{if($_.DoesNotRequirePreAuth-or $_.TrustedForDelegation-or $_.TrustedToAuthForDelegation-or @($_.ServicePrincipalName).Count){[pscustomobject]@{Account=$_.SamAccountName;Enabled=$_.Enabled;ASREP=$_.DoesNotRequirePreAuth;UnconstrainedDelegation=$_.TrustedForDelegation;ConstrainedDelegation=$_.TrustedToAuthForDelegation;SPNCount=@($_.ServicePrincipalName).Count;SPNs=(@($_.ServicePrincipalName)-join ' | ');PasswordLastSet=$_.PasswordLastSet;DistinguishedName=$_.DistinguishedName}}});foreach($r in $rows){if($r.ASREP){Finding High Kerberos 'AS-REP roastable account' $r.Account 'Pre-authentification desactivee.' 'Reactiver la pre-authentification.'};if($r.UnconstrainedDelegation){Finding High Kerberos 'Delegation non contrainte' $r.Account 'TrustedForDelegation active.' 'Verifier et supprimer si inutile.'}};$Script:Results.Kerberos=$rows;Ok ($rows.Count.ToString()+' comptes sensibles.')
+}
+function AuditPasswordPolicies{
+ Section 'Audit des politiques de mots de passe';$p=Get-ADDefaultDomainPasswordPolicy @(ADParams);$rows=@([pscustomobject]@{Type='DefaultDomain';Name='Default Domain Policy';MinPasswordLength=$p.MinPasswordLength;PasswordHistoryCount=$p.PasswordHistoryCount;ComplexityEnabled=$p.ComplexityEnabled;MaxPasswordAge=$p.MaxPasswordAge;MinPasswordAge=$p.MinPasswordAge;LockoutThreshold=$p.LockoutThreshold});if(Cmd Get-ADFineGrainedPasswordPolicy){$rows+=@(Get-ADFineGrainedPasswordPolicy @(ADParams) -Filter * -Properties *|%{[pscustomobject]@{Type='FineGrained';Name=$_.Name;Precedence=$_.Precedence;MinPasswordLength=$_.MinPasswordLength;PasswordHistoryCount=$_.PasswordHistoryCount;ComplexityEnabled=$_.ComplexityEnabled;MaxPasswordAge=$_.MaxPasswordAge;LockoutThreshold=$_.LockoutThreshold;AppliesTo=(@($_.AppliesTo)-join ' | ')}})};$Script:Results.PasswordPolicies=$rows;Ok ($rows.Count.ToString()+' politiques.')
+}
+function AuditSchema{
+ Section 'Audit du schema';$s=Get-ADObject @(ADParams) -SearchBase ((Get-ADRootDSE @(ADParams)).schemaNamingContext) -LDAPFilter '(|(objectClass=classSchema)(objectClass=attributeSchema))' -Properties lDAPDisplayName,objectClass,adminDisplayName,whenCreated,whenChanged;$Script:Results.Schema=@($s|%{[pscustomobject]@{LDAPDisplayName=$_.lDAPDisplayName;ObjectClass=($_.objectClass-join ',');AdminDisplayName=$_.adminDisplayName;WhenCreated=$_.whenCreated;WhenChanged=$_.whenChanged;DistinguishedName=$_.DistinguishedName}});Ok ($Script:Results.Schema.Count.ToString()+' objets schema.')
+}
+function AuditADCS{
+ Section 'Audit AD CS';$config=(Get-ADRootDSE @(ADParams)).configurationNamingContext;$rows=@(Get-ADObject @(ADParams) -SearchBase $config -LDAPFilter '(|(objectClass=pKIEnrollmentService)(objectClass=pKICertificateTemplate))' -Properties displayName,cn,certificateTemplates,flags,msPKI-Enrollment-Flag,msPKI-Certificate-Name-Flag,msPKI-Private-Key-Flag|%{[pscustomobject]@{Name=$_.displayName;CN=$_.cn;ObjectClass=($_.objectClass-join ',');CertificateTemplates=(@($_.certificateTemplates)-join ' | ');Flags=$_.flags;EnrollmentFlags=$_.'msPKI-Enrollment-Flag';CertificateNameFlags=$_.'msPKI-Certificate-Name-Flag';PrivateKeyFlags=$_.'msPKI-Private-Key-Flag';DistinguishedName=$_.DistinguishedName}});$Script:Results.ADCS=$rows;if($rows.Count){Finding Info ADCS 'Infrastructure AD CS detectee' 'AD CS' ($rows.Count.ToString()+' objets.') 'Faire une revue PKI dediee.'};Ok ($rows.Count.ToString()+' objets AD CS.')
+}
+function AuditRecycleBin{
+ Section 'Audit de la corbeille AD';$x=@(Get-ADOptionalFeature @(ADParams) -Filter 'Name -eq "Recycle Bin Feature"' -Properties EnabledScopes|%{[pscustomobject]@{Name=$_.Name;Enabled=($_.EnabledScopes.Count -gt 0);EnabledScopes=(@($_.EnabledScopes)-join ' | ');DistinguishedName=$_.DistinguishedName}});$Script:Results.RecycleBin=$x;if($x.Count-and-not $x[0].Enabled){Finding High RecycleBin 'Corbeille AD inactive' 'Recycle Bin Feature' 'La corbeille semble inactive.' 'Verifier la politique de restauration.'};Ok 'Corbeille AD auditee.'
+}
+function AuditAdminSDHolder{
+ Section 'Audit AdminSDHolder';$d=Get-ADDomain @(ADParams);$dn=('CN=AdminSDHolder,CN=System,'+$d.DistinguishedName);$a=Get-Acl ('AD:\'+$dn);$Script:Results.AdminSDHolder=@($a.Access|%{[pscustomobject]@{IdentityReference=$_.IdentityReference;ActiveDirectoryRights=$_.ActiveDirectoryRights;AccessControlType=$_.AccessControlType;ObjectType=$_.ObjectType;IsInherited=$_.IsInherited}});Ok ($Script:Results.AdminSDHolder.Count.ToString()+' ACE.')
+}
+function AuditGPOAnalysis{
+ Section 'Analyse GPO';if(-not(Cmd Get-GPOReport)){Warn 'Get-GPOReport indisponible.';return};$rows=@();foreach($g in @(Get-GPO -All @(ADParams))){try{[xml]$xml=Get-GPOReport -Guid $g.Id -ReportType Xml;$t=$xml.OuterXml;$f=@();if($t-match '(?i)EnableLUA.*false|FilterAdministratorToken.*false'){$f+='UAC weakening'};if($t-match '(?i)fDenyTSConnections.*0|Terminal Services'){$f+='RDP'};if($t-match '(?i)SMB1|LanmanServer.*SMB1'){$f+='SMB legacy'};if($t-match '(?i)DisableRealtimeMonitoring|DisableAntiSpyware'){$f+='Defender'};if($t-match '(?i)SeDebugPrivilege|SeTakeOwnershipPrivilege|SeBackupPrivilege'){$f+='Privileges sensibles'};if($f.Count){Finding Medium GPO ('Configuration sensible: '+$g.DisplayName) $g.DisplayName ($f-join ', ') 'Revoir la configuration.'};$rows+=[pscustomobject]@{Id=$g.Id.Guid;DisplayName=$g.DisplayName;Status=$g.GpoStatus;Flags=($f-join ' | ');Owner=$g.Owner;Created=$g.CreationTime;Modified=$g.ModificationTime}}catch{Warn ('GPO: '+$g.DisplayName+' / '+$_.Exception.Message)}};$Script:Results.GPOAnalysis=$rows;Ok ($rows.Count.ToString()+' GPO analysees.')
+}
 function ExportResults{
- Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue;New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
- foreach($n in $Script:Results.Keys){$d=@($Script:Results[$n]);if($d.Count-eq 0){continue};if($ExportFormat-in @('CSV','All')){$d|Export-Csv (Join-Path $OutputPath ($n+'.csv')) -NoTypeInformation -Encoding UTF8 -Delimiter ';'};if($ExportFormat-in @('JSON','All')){$d|ConvertTo-Json -Depth 8|Set-Content (Join-Path $OutputPath ($n+'.json')) -Encoding UTF8}}
- if($Script:Findings.Count-gt 0){if($ExportFormat-in @('CSV','All')){$Script:Findings|Export-Csv (Join-Path $OutputPath 'Findings.csv') -NoTypeInformation -Encoding UTF8 -Delimiter ';'};if($ExportFormat-in @('JSON','All')){$Script:Findings|ConvertTo-Json -Depth 8|Set-Content (Join-Path $OutputPath 'Findings.json') -Encoding UTF8}}
- $sum=[pscustomobject]@{ToolVersion=$Script:AuditVersion;StartedAt=$Script:StartedAt;FinishedAt=Get-Date;DomainController=$DomainController;Modules=($Script:Results.Keys-join ', ');FindingCount=$Script:Findings.Count;Critical=@($Script:Findings|? Severity-eq Critical).Count;High=@($Script:Findings|? Severity-eq High).Count;Medium=@($Script:Findings|? Severity-eq Medium).Count;Low=@($Script:Findings|? Severity-eq Low).Count}
- $sum|ConvertTo-Json|Set-Content (Join-Path $OutputPath 'Summary.json') -Encoding UTF8
- if($ExportFormat-in @('HTML','All')){
-  $fh=($Script:Findings|ConvertTo-Html -Fragment -PreContent '<h2>Findings</h2>')-join [Environment]::NewLine
-  $ss=foreach($n in $Script:Results.Keys){$d=@($Script:Results[$n]);if($d.Count-gt 0){'<h2>'+[System.Web.HttpUtility]::HtmlEncode($n)+'</h2>'+(($d|select -First 500|ConvertTo-Html -Fragment)-join [Environment]::NewLine)}}
-  $html='<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>AD Audit</title><style>body{font-family:Segoe UI,Arial;margin:30px;background:#f5f7fa}table{border-collapse:collapse;width:100%;background:white;font-size:12px}th,td{border:1px solid #ddd;padding:6px;text-align:left}th{background:#e9eef3}</style></head><body><h1>Active Directory Audit</h1><p>DC: '+$DomainController+'</p><p>Findings: '+$Script:Findings.Count+'</p>'+$fh+($ss-join [Environment]::NewLine)+'</body></html>'
-  $html|Set-Content (Join-Path $OutputPath 'AD-Audit.html') -Encoding UTF8
- };Ok ('Exports: '+$OutputPath)
+ New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null;$domain=$null;try{$domain=(Get-ADDomain @(ADParams)).DNSRoot}catch{};$file=Join-Path $OutputPath 'AD-Audit.json'
+ $obj=[ordered]@{Tool='AD Advanced Audit';Version=$Script:AuditVersion;StartedAt=$Script:StartedAt;FinishedAt=Get-Date;Domain=$domain;DomainController=$DomainController;ReadOnly=$true;Modules=@($Script:Results.Keys);Findings=@($Script:Findings);Results=$Script:Results}
+ $obj|ConvertTo-Json -Depth 12|Set-Content $file -Encoding UTF8;Ok ('UN SEUL fichier exporte: '+$file)
 }
 function SelectModules{
  Section 'Selection des modules';$k=@($ModuleDefinitions.Keys);for($i=0;$i-lt $k.Count;$i++){W(('[{0,2}] {1,-12} {2}'-f($i+1),$k[$i],$ModuleDefinitions[$k[$i]]))};W '[A] Tout auditer';$a=Read-Host 'Selection (ex: 1,2,5 ou A)';if($a-match '^[Aa]$'){return $k};$r=@();foreach($p in($a-split ',')){$n=0;if([int]::TryParse($p.Trim(),[ref]$n)-and$n-ge 1-and$n-le$k.Count){$r+=$k[$n-1]}};@($r|select -Unique)
 }
-function Run([string]$n){switch($n){Users{AuditUsers};Groups{AuditGroups};Computers{AuditComputers};OUs{AuditOUs};GPOs{AuditGPOs};Domain{AuditDomain};DCs{AuditDCs};Sites{AuditSites};Trusts{AuditTrusts};DNS{AuditDNS};Delegation{AuditDelegation};SPNs{AuditSPNs};LAPS{AuditLAPS};Health{AuditHealth};default{Warn ('Module inconnu: '+$n)}}}
+function Run([string]$n){switch($n){Users{AuditUsers};Groups{AuditGroups};Computers{AuditComputers};OUs{AuditOUs};GPOs{AuditGPOs};Domain{AuditDomain};DCs{AuditDCs};Sites{AuditSites};Trusts{AuditTrusts};DNS{AuditDNS};Delegation{AuditDelegation};SPNs{AuditSPNs};LAPS{AuditLAPS};Health{AuditHealth};Privileged{AuditPrivileged};Kerberos{AuditKerberos};PasswordPolicies{AuditPasswordPolicies};Schema{AuditSchema};ADCS{AuditADCS};RecycleBin{AuditRecycleBin};AdminSDHolder{AuditAdminSDHolder};GPOAnalysis{AuditGPOAnalysis};default{Warn ('Module inconnu: '+$n)}}}
 Section ('AD Advanced Audit v'+$Script:AuditVersion)
 if(-not(Cmd Get-ADDomain)){throw 'Le module ActiveDirectory est requis (RSAT).'}
 if(-not$Modules-or$Modules.Count-eq 0){ }else{if($Mode-eq 'All'){$Modules=@($ModuleDefinitions.Keys)}else{$Modules=SelectModules}}
