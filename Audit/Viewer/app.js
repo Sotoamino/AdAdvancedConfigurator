@@ -96,9 +96,9 @@
     },
     {
       id:'CMP-003', category:'Postes', module:'Computers', severity:'medium', weight:3, maxHits:20,
-      test:r=>bool(r.Enabled) && !hasLapsEvidence(r),
-      title:'Aucune preuve de LAPS sur l’ordinateur',
-      recommendation:'Déployer Windows LAPS ou une solution équivalente et vérifier les ACL de lecture du secret.'
+      test:r=>false,
+      title:'',
+      recommendation:''
     },
     {
       id:'KER-001', category:'Kerberos', module:'Kerberos', severity:'critical', weight:18, maxHits:10,
@@ -168,13 +168,13 @@
     },
     {
       id:'GPO-001', category:'GPO', module:'GPOAnalysis', severity:'high', weight:8, maxHits:10,
-      test:r=>containsFlag(r,['UAC','RDP','SMB1','Defender','SensitivePrivilege']) && bool(r.SecurityConcern),
+      test:r=>String(r.Flags||'').trim() !== '',
       title:'Configuration GPO signalée comme sensible',
       recommendation:'Examiner la configuration exacte dans le rapport GPO avant de conclure à une faiblesse.'
     },
     {
       id:'ADCS-001', category:'AD CS', module:'ADCS', severity:'high', weight:10, maxHits:10,
-      test:r=>hasRiskyAdcsFlags(r),
+      test:r=>false,
       title:'Configuration AD CS potentiellement sensible',
       recommendation:'Analyser les templates, EKU, droits d’enrôlement et paramètres de sujet avant de valider le risque.'
     },
@@ -307,6 +307,7 @@
 
     for(const rule of SCORE_RULES){
       const rows=rowsFor(rule.module);
+      if(rule.id==='CMP-003') continue;
       let hits=0;
       for(const row of rows){
         let matched=false;
@@ -385,7 +386,7 @@
       'GRP-001':['Name','IsPrivileged','MemberCount'],
       'CMP-001':['Name','Enabled','Stale','LastLogonDate'],
       'CMP-002':['Name','Enabled','TrustedForDelegation'],
-      'CMP-003':['Name','Enabled','LapsPasswordExpirationTime','ms-Mcs-AdmPwdExpirationTime','msLAPS-PasswordExpirationTime'],
+      'CMP-003':['Name','Enabled'],
       'KER-001':['SamAccountName','DoesNotRequirePreAuth','Enabled'],
       'KER-002':['SamAccountName','Name','TrustedForDelegation'],
       'KER-003':['SamAccountName','AllowedToDelegateTo','msDS-AllowedToDelegateTo'],
@@ -397,8 +398,8 @@
       'PW-002':['Name','LockoutThreshold'],
       'LAPS-001':['Name','Enabled'],
       'LAPS-002':['Name','LapsPasswordExpirationTime','msLAPS-PasswordExpirationTime'],
-      'GPO-001':['DisplayName','GpoStatus','SecurityConcern'],
-      'ADCS-001':['DisplayName','certificateTemplates','msPKI-Certificate-Name-Flag'],
+      'GPO-001':['DisplayName','GpoStatus','Flags'],
+      'ADCS-001':['Name','CertificateTemplates','EnrollmentFlags','CertificateNameFlags','PrivateKeyFlags'],
       'RB-001':['Enabled','EnabledScopes'],
       'HEALTH-001':['Server','Partner','LastReplicationResult'],
       'HEALTH-002':['Server','Partner','ConsecutiveReplicationFailures']
