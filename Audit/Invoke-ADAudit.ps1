@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.2.0';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.2.1';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -103,7 +103,7 @@ function AuditUsers{
  if($dcs.Count -eq 0 -and $DomainController){$dcs=@($DomainController)}
  if($dcs.Count -eq 0){try{$dcs=@((Get-ADDomain @ADParams).PDCEmulator)}catch{}}
 
- $x=@(Get-ADUser @ADParams -Filter * -Properties *|ForEach-Object{
+ $x=@(Get-ADUser @ADParams -Filter * -Properties *,msDS-User-Account-Control-Computed|ForEach-Object{
   $u=$_
   $uac=[int64]$u.UserAccountControl
   $uacComputed=0
@@ -169,7 +169,7 @@ function AuditOUs{
 function AuditGPOs{
  Section 'Audit des GPO';if(-not(Cmd Get-GPO)){Warn 'Module GroupPolicy absent. GPO ignorees.';return}
  $x=@(Get-GPO -All @ADParams|%{
-  $rp=$null;if($IncludeGPOReports){try{[xml]$gpoXml=Get-GPOReport -Guid $_.Id -ReportType Xml -ErrorAction Stop;$rp='IncludedInMemory'}catch{Warn ('Rapport GPO impossible: '+$_.DisplayName+' / '+$_.Exception.Message)}}
+  $rp=$null;if($IncludeGPOReports){try{[xml]$gpoXml=Get-GPOReport -Guid $_.Id -ReportType Xml -ErrorAction Stop;$rp=$gpoXml.OuterXml}catch{Warn ('Rapport GPO impossible: '+$_.DisplayName+' / '+$_.Exception.Message)}}
   [pscustomobject]@{Id=$_.Id.Guid;DisplayName=$_.DisplayName;DomainName=$_.DomainName;Owner=$_.Owner;GpoStatus=$_.GpoStatus;Description=$_.Description;CreationTime=$_.CreationTime;ModificationTime=$_.ModificationTime;WmiFilter=$_.WmiFilter.Name;ReportXml=$rp}
  });$Script:Results.GPOs=$x;Ok ($x.Count.ToString()+' GPO auditees.')
 }
@@ -197,8 +197,18 @@ function AuditTrusts{
  $Script:Results.Trusts=$x;Ok ($x.Count.ToString()+' trust(s) audite(s).')
 }
 function AuditSPNs{
- Section 'Audit des SPN';$x=@(Get-ADUser @ADParams -Filter * -Properties ServicePrincipalName,Enabled|%{foreach($spn in @($_.ServicePrincipalName)){[pscustomobject]@{Account=$_.SamAccountName;Enabled=$_.Enabled;SPN=$spn;DistinguishedName=$_.DistinguishedName}}})
- $Script:Results.SPNs=$x;Ok ($x.Count.ToString()+' SPN utilisateur(s).')
+ Section 'Audit des SPN'
+ $x=@()
+ $users=@(Get-ADUser @ADParams -Filter * -Properties ServicePrincipalName,Enabled,SamAccountName,DistinguishedName)
+ foreach($u in $users){
+  foreach($spn in @($u.ServicePrincipalName)){
+   if(-not [string]::IsNullOrWhiteSpace([string]$spn)){
+    $x+=[pscustomobject]@{Account=$u.SamAccountName;Enabled=$u.Enabled;SPN=[string]$spn;DistinguishedName=$u.DistinguishedName}
+   }
+  }
+ }
+ $Script:Results.SPNs=$x
+ Ok ($x.Count.ToString()+' SPN utilisateur(s).')
 }
 function AuditLAPS{
  Section 'Audit LAPS';$x=@(Get-ADComputer @ADParams -Filter * -Properties 'ms-Mcs-AdmPwdExpirationTime','msLAPS-PasswordExpirationTime'|%{[pscustomobject]@{Computer=$_.Name;LegacyLAPSAttributePresent=($null -ne  $_.'ms-Mcs-AdmPwdExpirationTime');LegacyLAPSExpiration=$_.'ms-Mcs-AdmPwdExpirationTime';WindowsLAPSAttributePresent=($null -ne  $_.'msLAPS-PasswordExpirationTime');WindowsLAPSExpiration=$_.'msLAPS-PasswordExpirationTime';DistinguishedName=$_.DistinguishedName}})
@@ -210,7 +220,23 @@ function AuditDelegation{
  $Script:Results.Delegation=$x;Ok ($x.Count.ToString()+' ACE collectees.')
 }
 function AuditDNS{
- Section 'Audit DNS';$x=@();if(Cmd Get-DnsServerZone){try{$x=@(Get-DnsServerZone -ComputerName $DomainController -ErrorAction Stop|select ZoneName,ZoneType,IsDsIntegrated,DynamicUpdate,ReplicationScope,DirectoryPartitionName)}catch{Warn ('DNS indisponible: '+$_.Exception.Message)}}else{Warn 'Module DnsServer absent. DNS ignore.'};$Script:Results.DNS=$x;Ok ($x.Count.ToString()+' zone(s) DNS.')
+ Section 'Audit DNS'
+ $x=@()
+ if(Cmd Get-DnsServerZone){
+  try{
+   $dnsServer=$DomainController
+   if([string]::IsNullOrWhiteSpace($dnsServer)){
+    try{$dnsServer=(Get-ADDomainController -Discover -Service PrimaryDC @ADParams).HostName}catch{}
+   }
+   if([string]::IsNullOrWhiteSpace($dnsServer)){
+    try{$dnsServer=(Get-ADDomain @ADParams).PDCEmulator}catch{}
+   }
+   if([string]::IsNullOrWhiteSpace($dnsServer)){$x=@(Get-DnsServerZone -ErrorAction Stop)}
+   else{$x=@(Get-DnsServerZone -ComputerName $dnsServer -ErrorAction Stop)}
+  }catch{Warn ('DNS indisponible: '+$_.Exception.Message)}
+ }else{Warn 'Module DnsServer absent. DNS ignore.'}
+ $Script:Results.DNS=$x
+ Ok ($x.Count.ToString()+' zone(s) DNS.')
 }
 function AuditHealth{
  Section 'Audit de la sante AD';$x=@();if(Cmd Get-ADReplicationPartnerMetadata){try{$x=@(Get-ADDomainController -Filter * @ADParams|%{Get-ADReplicationPartnerMetadata -Target $_.HostName -Scope Server -ErrorAction SilentlyContinue|select Server,Partner,LastReplicationSuccess,LastReplicationResult,ConsecutiveReplicationFailures,LastReplicationAttempt});foreach($z in $x){if($z.ConsecutiveReplicationFailures -gt  0 -or  $z.LastReplicationResult -ne  0){Finding High Health 'Echec de replication AD' (($z.Server)+' -> '+($z.Partner)) ('Resultat='+$z.LastReplicationResult+'; echecs='+$z.ConsecutiveReplicationFailures) 'Analyser DNS, RPC, Kerberos et les journaux AD.'}}}catch{Warn ('Replication indisponible: '+$_.Exception.Message)}};$Script:Results.Health=$x;Ok ($x.Count.ToString()+' relations de replication.')
@@ -228,10 +254,10 @@ function AuditSchema{
  Section 'Audit du schema';$s=Get-ADObject @ADParams -SearchBase ((Get-ADRootDSE @ADParams).schemaNamingContext) -LDAPFilter '(|(objectClass=classSchema)(objectClass=attributeSchema))' -Properties lDAPDisplayName,objectClass,adminDisplayName,whenCreated,whenChanged;$Script:Results.Schema=@($s|%{[pscustomobject]@{LDAPDisplayName=$_.lDAPDisplayName;ObjectClass=($_.objectClass-join ',');AdminDisplayName=$_.adminDisplayName;WhenCreated=$_.whenCreated;WhenChanged=$_.whenChanged;DistinguishedName=$_.DistinguishedName}});Ok ($Script:Results.Schema.Count.ToString()+' objets schema.')
 }
 function AuditADCS{
- Section 'Audit AD CS';$config=(Get-ADRootDSE @ADParams).configurationNamingContext;$rows=@(Get-ADObject @ADParams -SearchBase $config -LDAPFilter '(|(objectClass=pKIEnrollmentService)(objectClass=pKICertificateTemplate))' -Properties displayName,cn,certificateTemplates,flags,msPKI-Enrollment-Flag,msPKI-Certificate-Name-Flag,msPKI-Private-Key-Flag|%{[pscustomobject]@{Name=$_.displayName;CN=$_.cn;ObjectClass=($_.objectClass-join ',');CertificateTemplates=(@($_.certificateTemplates)-join ' | ');Flags=$_.flags;EnrollmentFlags=$_.'msPKI-Enrollment-Flag';CertificateNameFlags=$_.'msPKI-Certificate-Name-Flag';PrivateKeyFlags=$_.'msPKI-Private-Key-Flag';DistinguishedName=$_.DistinguishedName}});$Script:Results.ADCS=$rows;if($rows.Count){Finding Info ADCS 'Infrastructure AD CS detectee' 'AD CS' ($rows.Count.ToString()+' objets.') 'Faire une revue PKI dediee.'};Ok ($rows.Count.ToString()+' objets AD CS.')
+ Section 'Audit AD CS';$config=(Get-ADRootDSE @ADParams).configurationNamingContext;$rows=@(Get-ADObject @ADParams -SearchBase $config -LDAPFilter '(|(objectClass=pKIEnrollmentService)(objectClass=pKICertificateTemplate))' -Properties displayName,cn,certificateTemplates,flags,'msPKI-Enrollment-Flag','msPKI-Certificate-Name-Flag','msPKI-Private-Key-Flag'|%{[pscustomobject]@{Name=$_.displayName;CN=$_.cn;ObjectClass=($_.objectClass-join ',');CertificateTemplates=(@($_.certificateTemplates)-join ' | ');Flags=$_.flags;EnrollmentFlags=$_.'msPKI-Enrollment-Flag';CertificateNameFlags=$_.'msPKI-Certificate-Name-Flag';PrivateKeyFlags=$_.'msPKI-Private-Key-Flag';DistinguishedName=$_.DistinguishedName}});$Script:Results.ADCS=$rows;if($rows.Count){Finding Info ADCS 'Infrastructure AD CS detectee' 'AD CS' ($rows.Count.ToString()+' objets.') 'Faire une revue PKI dediee.'};Ok ($rows.Count.ToString()+' objets AD CS.')
 }
 function AuditRecycleBin{
- Section 'Audit de la corbeille AD';$x=@(Get-ADOptionalFeature @ADParams -Filter 'Name -eq "Recycle Bin Feature"' -Properties EnabledScopes|%{[pscustomobject]@{Name=$_.Name;Enabled=($_.EnabledScopes.Count -gt 0);EnabledScopes=(@($_.EnabledScopes)-join ' | ');DistinguishedName=$_.DistinguishedName}});$Script:Results.RecycleBin=$x;if($x.Count -and  -not $x[0].Enabled){Finding High RecycleBin 'Corbeille AD inactive' 'Recycle Bin Feature' 'La corbeille semble inactive.' 'Verifier la politique de restauration.'};Ok 'Corbeille AD auditee.'
+ Section 'Audit de la corbeille AD';$x=@(Get-ADOptionalFeature @ADParams -Filter 'Name -eq "Recycle Bin Feature"' -Properties EnabledScopes|%{[pscustomobject]@{Name=$_.Name;Enabled=($_.EnabledScopes.Count -gt 0);EnabledScopes=(@($_.EnabledScopes)-join ' | ');DistinguishedName=$_.DistinguishedName}});$Script:Results.RecycleBin=$x;if($x.Count -gt 0 -and -not $x[0].Enabled){Finding High RecycleBin 'Corbeille AD inactive' 'Recycle Bin Feature' 'La corbeille semble inactive.' 'Verifier la politique de restauration.'};Ok 'Corbeille AD auditee.'
 }
 function AuditAdminSDHolder{
  Section 'Audit AdminSDHolder';$d=Get-ADDomain @ADParams;$dn=('CN=AdminSDHolder,CN=System,'+$d.DistinguishedName);$a=Get-Acl ('AD:\'+$dn);$Script:Results.AdminSDHolder=@($a.Access|%{[pscustomobject]@{IdentityReference=$_.IdentityReference;ActiveDirectoryRights=$_.ActiveDirectoryRights;AccessControlType=$_.AccessControlType;ObjectType=$_.ObjectType;IsInherited=$_.IsInherited}});Ok ($Script:Results.AdminSDHolder.Count.ToString()+' ACE.')
