@@ -148,7 +148,7 @@ function AuditGPOAnalysis{
 }
 function GetRiskLevel([int]$score){if($score -ge 75){'Critical'}elseif($score -ge 50){'High'}elseif($score -ge 25){'Medium'}elseif($score -gt 0){'Low'}else{'None'}}
 function GetAuditSummary{
- $f=@($Script:Findings);$sum=($f|Measure-Object Score -Sum).Sum;if($null -eq $sum){$sum=0};$score=[Math]::Min(100,[int]$sum)
+ $f=@($Script:Findings);$sum=($f|Measure-Object Score -Sum).Sum;if($null -eq $sum){$sum=0};$score=[int]$sum;if($score -gt 100){$score=100};if($score -lt 0){$score=0}
  $sev=[ordered]@{};foreach($s in @('Critical','High','Medium','Low','Info')){$sev[$s]=@($f|? Severity -eq $s).Count}
  $recs=@($f|? Recommendation|Group-Object Recommendation|Sort-Object Count -Descending|Select-Object -First 10|%{[pscustomobject]@{Recommendation=$_.Name;FindingCount=$_.Count}})
  [pscustomobject]@{RiskScore=$score;RiskLevel=(GetRiskLevel $score);FindingCount=$f.Count;BySeverity=$sev;TopRecommendations=$recs}
