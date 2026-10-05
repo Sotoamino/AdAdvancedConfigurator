@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.3.3';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.3.4';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -40,7 +40,16 @@ function AccountType([int64]$u){
  foreach($item in $map){if(($u -band [int64]$item.Bit) -ne 0){[void]$f.Add($item.Name)}}
  $f -join ','
 }
-function Recurse([string]$dn){try{@(Get-ADGroupMember @ADParams -Identity $dn -Recursive -ErrorAction Stop)}catch{Warn ('Membres recursifs indisponibles: '+$dn+' / '+$_.Exception.Message);@()}}
+function Recurse([string]$dn){
+ try{
+  $base=(Get-ADRootDSE @ADParams).defaultNamingContext
+  $filter='(&(objectCategory=person)(memberOf:1.2.840.113556.1.4.1941:='+$dn+'))'
+  return @(Get-ADObject @ADParams -SearchBase $base -LDAPFilter $filter -Properties objectClass,Name,SamAccountName,DistinguishedName -ErrorAction Stop)
+ }catch{
+  Warn ('Membres recursifs indisponibles: '+$dn+' / '+$_.Exception.Message)
+  @()
+ }
+}
 function Get-UserLinkedGPOs([string]$UserDN){
  $result=New-Object System.Collections.Generic.List[string]
  if(-not(Cmd Get-GPInheritance)){return @()}
@@ -245,7 +254,17 @@ function AuditHealth{
  Section 'Audit de la sante AD';$x=@();if(Cmd Get-ADReplicationPartnerMetadata){try{$x=@(Get-ADDomainController -Filter * @ADParams|%{Get-ADReplicationPartnerMetadata -Target $_.HostName -Scope Server -ErrorAction SilentlyContinue|select Server,Partner,LastReplicationSuccess,LastReplicationResult,ConsecutiveReplicationFailures,LastReplicationAttempt});foreach($z in $x){if($z.ConsecutiveReplicationFailures -gt  0 -or  $z.LastReplicationResult -ne  0){Finding High Health 'Echec de replication AD' (($z.Server)+' -> '+($z.Partner)) ('Resultat='+$z.LastReplicationResult+'; echecs='+$z.ConsecutiveReplicationFailures) 'Analyser DNS, RPC, Kerberos et les journaux AD.'}}}catch{Warn ('Replication indisponible: '+$_.Exception.Message)}};$Script:Results.Health=$x;Ok ($x.Count.ToString()+' relations de replication.')
 }
 function AuditPrivileged{
- Section 'Audit des privileges';$rows=@();foreach($name in (PrivGroups)){try{$g=Get-ADGroup @ADParams -Identity $name -Properties *;$m=@(Get-ADGroupMember @ADParams -Identity $g.DistinguishedName -Recursive -ErrorAction SilentlyContinue);$rows+=[pscustomobject]@{Group=$name;Exists=$true;MemberCount=$m.Count;Members=(($m|select -Expand Name)-join ' | ');DistinguishedName=$g.DistinguishedName};if($m.Count){Finding Medium Privileged ('Groupe privilegie: '+$name) $name ($m.Count.ToString()+' membre(s).') 'Verifier les membres.'}}catch{$rows+=[pscustomobject]@{Group=$name;Exists=$false;MemberCount=0;Members='';DistinguishedName=''}}};$Script:Results.Privileged=$rows;Ok ($rows.Count.ToString()+' groupes sensibles verifies.')
+ Section 'Audit des privileges';$rows=@();$names=@(PrivGroups);$i=0
+ foreach($name in $names){$i++
+  try{
+   W ('[*] Groupe sensible '+$i+'/'+$names.Count+': '+$name)
+   $g=Get-ADGroup @ADParams -Identity $name -Properties * -ErrorAction Stop
+   $m=@(Recurse $g.DistinguishedName)
+   $rows+=[pscustomobject]@{Group=$name;Exists=$true;MemberCount=$m.Count;Members=(($m|select -Expand Name)-join ' | ');DistinguishedName=$g.DistinguishedName}
+   if($m.Count){Finding Medium Privileged ('Groupe privilegie: '+$name) $name ($m.Count.ToString()+' membre(s).') 'Verifier les membres.'}
+  }catch{$rows+=[pscustomobject]@{Group=$name;Exists=$false;MemberCount=0;Members='';DistinguishedName=''}}
+ }
+ $Script:Results.Privileged=$rows;Ok ($rows.Count.ToString()+' groupes sensibles verifies.')
 }
 function AuditKerberos{
  Section 'Audit Kerberos'
