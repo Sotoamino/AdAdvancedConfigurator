@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.3.1';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.3.2';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -302,8 +302,8 @@ function ExportResults{
   Add-Member -InputObject $report -MemberType NoteProperty -Name FinishedAt -Value ([string](Get-Date))
   Add-Member -InputObject $report -MemberType NoteProperty -Name Domain -Value $domainName
   Add-Member -InputObject $report -MemberType NoteProperty -Name ReadOnly -Value $true
-  Add-Member -InputObject $report -MemberType NoteProperty -Name SelectedModules -Value @($Script:SelectedModules)
-  Add-Member -InputObject $report -MemberType NoteProperty -Name Findings -Value @($Script:Findings)
+  Add-Member -InputObject $report -MemberType NoteProperty -Name SelectedModules -Value ([string[]]$Script:SelectedModules.ToArray())
+  Add-Member -InputObject $report -MemberType NoteProperty -Name Findings -Value ([object[]]$Script:Findings.ToArray())
   Add-Member -InputObject $report -MemberType NoteProperty -Name Results -Value $Script:Results
   New-Item -ItemType Directory -Path $OutputPath -Force -ErrorAction Stop|Out-Null
   if($ExportFormat -eq 'JSON' -or $ExportFormat -eq 'Both'){
