@@ -332,7 +332,7 @@ function AuditSecurity{
   if($keyCred.Count -gt 0){Finding Medium Security 'Credential key presente' $u.SamAccountName 'msDS-KeyCredentialLink est present.' 'Verifier les Windows Hello for Business/FIDO et les identites attendues.'}
   if($u.altSecurityIdentities){Finding Medium Security 'Identite alternative configuree' $u.SamAccountName 'altSecurityIdentities est renseigne.' 'Verifier l usage de certificats et la chaine de confiance.'}
  }
- $computers=@(Get-ADComputer @ADParams -Filter * -Properties adminCount,'msDS-SupportedEncryptionTypes','msDS-AllowedToDelegateTo','msDS-AllowedToActOnBehalfOfOtherIdentity',sIDHistory,servicePrincipalName,userCertificate,userAccountControl,pwdLastSet,primaryGroupID,Enabled,OperatingSystem,OperatingSystemVersion)
+ $computers=@(Get-ADComputer @ADParams -Filter * -Properties adminCount,TrustedForDelegation,TrustedToAuthForDelegation,'msDS-SupportedEncryptionTypes','msDS-AllowedToDelegateTo','msDS-AllowedToActOnBehalfOfOtherIdentity',sIDHistory,servicePrincipalName,userCertificate,userAccountControl,pwdLastSet,primaryGroupID,Enabled,OperatingSystem,OperatingSystemVersion)
  foreach($co in $computers){
   $sidHistory=@($co.sIDHistory);$spns=@($co.ServicePrincipalName);$deleg=@($co.'msDS-AllowedToDelegateTo');$rbcd=$null -ne $co.'msDS-AllowedToActOnBehalfOfOtherIdentity'
   $adminCount=($null -ne $co.adminCount -and [int]$co.adminCount -eq 1)
@@ -361,7 +361,23 @@ function AuditSecurity{
   DefaultNamingContext=$root.defaultNamingContext;ConfigurationNamingContext=$root.configurationNamingContext
   SchemaNamingContext=$root.schemaNamingContext;RootDomainNamingContext=$root.rootDomainNamingContext
  }
+ $groups=@(Get-ADGroup @ADParams -Filter * -Properties adminCount,sIDHistory,memberOf,managedBy,description,groupType)
+ $securityGroups=New-Object System.Collections.Generic.List[object]
+ foreach($g in $groups){
+  $sidHistory=@($g.sIDHistory);$adminCount=($null -ne $g.adminCount -and [int]$g.adminCount -eq 1)
+  if($adminCount -or $sidHistory.Count -gt 0 -or $g.Name -in (PrivGroups)){
+   [void]$securityGroups.Add([pscustomobject]@{
+    Name=$g.Name;SamAccountName=$g.SamAccountName;AdminCount=$g.adminCount;PrivilegedMarker=$adminCount
+    SIDHistoryPresent=($sidHistory.Count -gt 0);SIDHistoryCount=$sidHistory.Count
+    GroupScope=$g.GroupScope;GroupCategory=$g.GroupCategory;ManagedBy=$g.ManagedBy
+    Description=$g.Description;DistinguishedName=$g.DistinguishedName;SID=$g.SID.Value
+   })
+  }
+  if($sidHistory.Count -gt 0){Finding High Security 'SIDHistory present sur un groupe' $g.Name ($sidHistory.Count.ToString()+' entree(s) SIDHistory.') 'Verifier chaque SID historique.'}
+ }
+ if($null -ne $machineQuota -and [int]$machineQuota -gt 0){Finding Medium Security 'MachineAccountQuota non nul' $d.DNSRoot ('ms-DS-MachineAccountQuota='+$machineQuota) 'Verifier si les utilisateurs doivent pouvoir joindre des machines au domaine.'}
  $Script:Results.SecurityAccounts=@($rows)
+ $Script:Results.SecurityGroups=@($securityGroups)
  $Script:Results.SecurityDomain=@($securityRoot)
  Ok ($rows.Count.ToString()+' objets a interet securite eleve collectes.')
  Ok 'Parametres de securite structurels du domaine collectes.'
