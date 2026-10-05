@@ -81,15 +81,26 @@ function Get-ADUserRawAttributes($User){
   try{
    $v=$p.Value
    if($null -eq $v){continue}
-   if($v -is [System.Collections.IEnumerable] -and -not ($v -is [string])){
-    $items=@($v|ForEach-Object {[string]$_})
-    if($items.Count -gt 0){$raw[$p.Name]=$items}
+   if($v -is [byte[]]){
+    $raw[$p.Name]=[Convert]::ToBase64String($v)
+   }elseif($v -is [datetime]){
+    $raw[$p.Name]=$v.ToString('o')
+   }elseif($v -is [guid]){
+    $raw[$p.Name]=$v.ToString()
+   }elseif($v -is [System.Security.Principal.SecurityIdentifier]){
+    $raw[$p.Name]=$v.Value
+   }elseif($v -is [System.Collections.IEnumerable] -and -not ($v -is [string])){
+    $items=New-Object System.Collections.Generic.List[string]
+    foreach($item in $v){
+     if($null -ne $item){[void]$items.Add([string]$item)}
+    }
+    if($items.Count -gt 0){$raw[$p.Name]=@($items.ToArray())}
    }else{
     $raw[$p.Name]=$v
    }
   }catch{}
  }
- $raw
+ return $raw
 }
 
 function Get-UserLastLogonAccurate([string]$UserDN,[object[]]$DomainControllers){
