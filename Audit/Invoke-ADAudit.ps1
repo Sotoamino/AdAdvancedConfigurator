@@ -8,7 +8,7 @@ param(
  [string]$DomainController,
  [switch]$IncludeGPOReports,[switch]$NoConsole
 )
-Set-StrictMode -Version Latest
+# StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
 $Script:AuditVersion='1.1.0';$Script:StartedAt=Get-Date
@@ -169,8 +169,8 @@ function ExportResults{
 function Run([string]$n){switch($n){Users{AuditUsers};Groups{AuditGroups};Computers{AuditComputers};OUs{AuditOUs};GPOs{AuditGPOs};Domain{AuditDomain};DCs{AuditDCs};Sites{AuditSites};Trusts{AuditTrusts};DNS{AuditDNS};Delegation{AuditDelegation};SPNs{AuditSPNs};LAPS{AuditLAPS};Health{AuditHealth};Privileged{AuditPrivileged};Kerberos{AuditKerberos};PasswordPolicies{AuditPasswordPolicies};Schema{AuditSchema};ADCS{AuditADCS};RecycleBin{AuditRecycleBin};AdminSDHolder{AuditAdminSDHolder};GPOAnalysis{AuditGPOAnalysis};default{Warn ('Module inconnu: '+$n)}}}
 Section ('AD Advanced Audit v'+$Script:AuditVersion)
 if(-not(Cmd Get-ADDomain)){throw 'Le module ActiveDirectory est requis (RSAT).'}
-$Modules = if($null -eq $Modules){ @() } else { @($Modules) }
-if($Modules.Length -eq 0){if($Mode -eq 'All'){$Modules=@($ModuleDefinitions.Keys)}else{$Modules=@(SelectModules)}}
-if($Modules.Length -eq 0){throw 'Aucun module selectionne.'};New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
+$Modules = @($Modules)
+if(@($Modules).Count -eq 0){if($Mode -eq 'All'){$Modules=@($ModuleDefinitions.Keys)}else{$Modules=@(SelectModules)}}
+if(@($Modules).Count -eq 0){throw 'Aucun module selectionne.'};New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
 foreach($m in $Modules){try{Run $m}catch{Warn ('Module '+$m+' en erreur: '+$_.Exception.Message);Finding High Engine ('Echec du module '+$m) $m $_.Exception.Message 'Verifier les droits, RSAT et la connectivite.'}}
 ExportResults;Section 'Fin de l audit';W ('Modules: '+($Script:Results.Keys-join ', '));W ('Findings: '+$Script:Findings.Count);$s=GetAuditSummary;W ('Risk score: '+$s.RiskScore+'/100 ('+$s.RiskLevel+')');W ('Repertoire: '+$OutputPath)
