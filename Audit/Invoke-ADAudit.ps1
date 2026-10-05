@@ -83,7 +83,7 @@ function AuditDomain{
  Section 'Audit du domaine';$d=Get-ADDomain @ADParams;$f=Get-ADForest @ADParams;$p=Get-ADDefaultDomainPasswordPolicy @ADParams
  if($p.MinPasswordLength-lt 12){Finding Medium Domain 'Longueur de mot de passe faible' $d.DNSRoot ('Minimum: '+$p.MinPasswordLength) 'Viser 12 caracteres ou davantage.'}
  if($p.PasswordHistoryCount-lt 10){Finding Low Domain 'Historique de mot de passe faible' $d.DNSRoot ('Historique: '+$p.PasswordHistoryCount) 'Augmenter l historique.'}
- if($p.LockoutThreshold-eq 0){Finding High Domain 'Verrouillage absent' $d.DNSRoot 'LockoutThreshold a 0.' 'Definir une politique de verrouillage adaptee.'}
+ if($p.LockoutThreshold -eq 0){Finding High Domain 'Verrouillage absent' $d.DNSRoot 'LockoutThreshold a 0.' 'Definir une politique de verrouillage adaptee.'}
  $Script:Results.Domain=@([pscustomobject]@{DNSRoot=$d.DNSRoot;NetBIOSName=$d.NetBIOSName;DomainMode=$d.DomainMode;ForestRoot=$f.RootDomain;ForestMode=$f.ForestMode;DomainControllers=($d.ReplicaDirectoryServers-join ' | ');MinPasswordLength=$p.MinPasswordLength;PasswordHistoryCount=$p.PasswordHistoryCount;ComplexityEnabled=$p.ComplexityEnabled;ReversibleEncryptionEnabled=$p.ReversibleEncryptionEnabled;MaxPasswordAge=$p.MaxPasswordAge;MinPasswordAge=$p.MinPasswordAge;LockoutThreshold=$p.LockoutThreshold;LockoutDuration=$p.LockoutDuration;LockoutObservationWindow=$p.LockoutObservationWindow})
  Ok 'Domaine, foret et politique de mots de passe audites.'
 }
@@ -169,7 +169,8 @@ function ExportResults{
 function Run([string]$n){switch($n){Users{AuditUsers};Groups{AuditGroups};Computers{AuditComputers};OUs{AuditOUs};GPOs{AuditGPOs};Domain{AuditDomain};DCs{AuditDCs};Sites{AuditSites};Trusts{AuditTrusts};DNS{AuditDNS};Delegation{AuditDelegation};SPNs{AuditSPNs};LAPS{AuditLAPS};Health{AuditHealth};Privileged{AuditPrivileged};Kerberos{AuditKerberos};PasswordPolicies{AuditPasswordPolicies};Schema{AuditSchema};ADCS{AuditADCS};RecycleBin{AuditRecycleBin};AdminSDHolder{AuditAdminSDHolder};GPOAnalysis{AuditGPOAnalysis};default{Warn ('Module inconnu: '+$n)}}}
 Section ('AD Advanced Audit v'+$Script:AuditVersion)
 if(-not(Cmd Get-ADDomain)){throw 'Le module ActiveDirectory est requis (RSAT).'}
-if($null -eq $Modules -or @($Modules).Count -eq 0){if($Mode -eq 'All'){$Modules=@($ModuleDefinitions.Keys)}else{$Modules=@(SelectModules)}}else{$Modules=@($Modules)}
-if(@($Modules).Count -eq 0){throw 'Aucun module selectionne.'};New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
+$Modules = if($null -eq $Modules){ @() } else { @($Modules) }
+if($Modules.Length -eq 0){if($Mode -eq 'All'){$Modules=@($ModuleDefinitions.Keys)}else{$Modules=@(SelectModules)}}
+if($Modules.Length -eq 0){throw 'Aucun module selectionne.'};New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
 foreach($m in $Modules){try{Run $m}catch{Warn ('Module '+$m+' en erreur: '+$_.Exception.Message);Finding High Engine ('Echec du module '+$m) $m $_.Exception.Message 'Verifier les droits, RSAT et la connectivite.'}}
 ExportResults;Section 'Fin de l audit';W ('Modules: '+($Script:Results.Keys-join ', '));W ('Findings: '+$Script:Findings.Count);$s=GetAuditSummary;W ('Risk score: '+$s.RiskScore+'/100 ('+$s.RiskLevel+')');W ('Repertoire: '+$OutputPath)
