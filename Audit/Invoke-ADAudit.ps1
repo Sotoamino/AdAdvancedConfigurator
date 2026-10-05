@@ -23,8 +23,8 @@ function Warn([string]$s){if(-not $NoConsole){Write-Host ('[!] '+$s) -Foreground
 function Cmd([string]$n){return [bool](Get-Command $n -ErrorAction SilentlyContinue)}
 function ADParams{$p=@{};if($DomainController){$p.Server=$DomainController};$p}
 function Finding{param([string]$Severity,[string]$Category,[string]$Title,[string]$Object,[string]$Details,[string]$Recommendation)
- $weights=@{Critical=25;High=15;Medium=7;Low=2;Info=0};$points=0;if($weights.ContainsKey($Severity)){$points=$weights[$Severity]}
- [void]$Script:Findings.Add([pscustomobject]@{Severity=$Severity;Score=$points;Category=$Category;Title=$Title;Object=$Object;Details=$Details;Recommendation=$Recommendation})}
+ [void]$Script:Findings.Add([pscustomobject]@{Severity=$Severity;Category=$Category;Title=$Title;Object=$Object;Details=$Details;Recommendation=$Recommendation})
+}
 function PrivGroups{@('Domain Admins','Enterprise Admins','Schema Admins','Administrators','Account Operators','Server Operators','Backup Operators','Print Operators','DnsAdmins','Group Policy Creator Owners','Key Admins','Enterprise Key Admins','Protected Users','Cert Publishers')}
 function AccountType([int]$u){
  $f=@();if($u-band 2){$f+='ACCOUNTDISABLE'};if($u-band 32){$f+='PASSWD_NOTREQD'};if($u-band 512){$f+='NORMAL_ACCOUNT'}
@@ -33,27 +33,52 @@ function AccountType([int]$u){
  if($u-band 8388608){$f+='PASSWORD_EXPIRED'};if($u-band 16777216){$f+='TRUSTED_TO_AUTH_FOR_DELEGATION'};($f -join ',')
 }
 function Recurse([string]$dn){try{@(Get-ADGroupMember @ADParams -Identity $dn -Recursive -ErrorAction Stop)}catch{Warn ('Membres recursifs indisponibles: '+$dn+' / '+$_.Exception.Message);@()}}
+function Get-UserLinkedGPOs([string]$UserDN){
+ $result=New-Object System.Collections.Generic.List[string]
+ if(-not(Cmd Get-GPInheritance)){return @()}
+ $parts=$UserDN -split ','
+ $ous=New-Object System.Collections.Generic.List[string]
+ $dcParts=@($parts|Where-Object {$_ -like 'DC=*'})
+ $ouParts=@($parts|Where-Object {$_ -like 'OU=*'})
+ for($i=0;$i -lt $ouParts.Count;$i++){
+  $dn=($ouParts[$i..($ouParts.Count-1)] + $dcParts) -join ','
+  [void]$ous.Add($dn)
+ }
+ foreach($ou in $ous){
+  try{
+   $inheritance=Get-GPInheritance -Target $ou -ErrorAction Stop
+   foreach($link in @($inheritance.GpoLinks)){
+    if($link.GpoId){[void]$result.Add(([string]$link.DisplayName)+' ['+([string]$link.GpoId)+']')}
+   }
+  }catch{}
+ }
+ return @($result|Select-Object -Unique)
+}
+
 function AuditUsers{
- Section 'Audit des utilisateurs';$priv=PrivGroups
- $x=@(Get-ADUser @ADParams -Filter * -Properties *|%{
-  $g=@(Get-ADPrincipalGroupMembership @ADParams -Identity $_.DistinguishedName -ErrorAction SilentlyContinue);$gn=@($g|select -Expand Name);$pg=@($g|?{$priv-contains $_.Name})
-  if($_.PasswordNeverExpires){Finding Medium Users 'Mot de passe permanent' $_.SamAccountName 'PasswordNeverExpires active.' 'Desactiver sauf exception documentee.'}
-  if($_.PasswordNotRequired){Finding High Users 'Mot de passe non requis' $_.SamAccountName 'PASSWD_NOTREQD active.' 'Imposer un mot de passe et verifier le compte.'}
-  if($_.DoesNotRequirePreAuth){Finding High Users 'Pre-authentification Kerberos desactivee' $_.SamAccountName 'Compte AS-REP roastable.' 'Reactiver la pre-authentification.'}
-  if($_.TrustedForDelegation){Finding High Users 'Delegation Kerberos non contrainte' $_.SamAccountName 'TrustedForDelegation active.' 'Verifier et limiter la delegation.'}
+ Section 'Audit des utilisateurs'
+ $x=@(Get-ADUser @ADParams -Filter * -Properties *|ForEach-Object{
+  $g=@(Get-ADPrincipalGroupMembership @ADParams -Identity $_.DistinguishedName -ErrorAction SilentlyContinue)
+  $gn=@($g|Select-Object -ExpandProperty Name)
+  $priv=@($g|Where-Object {$_.Name -in (PrivGroups)})
+  $linkedGPOs=Get-UserLinkedGPOs $_.DistinguishedName
   [pscustomobject]@{
    SamAccountName=$_.SamAccountName;UserPrincipalName=$_.UserPrincipalName;Name=$_.Name;GivenName=$_.GivenName;Surname=$_.Surname;DisplayName=$_.DisplayName
-   Enabled=$_.Enabled;AccountType=(AccountType $_.UserAccountControl);UserAccountControl=$_.UserAccountControl;DistinguishedName=$_.DistinguishedName;CanonicalName=$_.CanonicalName
-   Description=$_.Description;Department=$_.Department;Title=$_.Title;Company=$_.Company;EmailAddress=$_.Mail;EmployeeId=$_.EmployeeID
-   Created=$_.Created;Modified=$_.Modified;LastLogonDate=$_.LastLogonDate;LastLogonTimestamp=$_.LastLogonTimestamp;LastBadPasswordAttempt=$_.LastBadPasswordAttempt
-   BadLogonCount=$_.BadLogonCount;BadPwdCount=$_.BadPwdCount;LockedOut=$_.LockedOut;PasswordLastSet=$_.PasswordLastSet;PasswordExpired=$_.PasswordExpired
-   PasswordNeverExpires=$_.PasswordNeverExpires;PasswordNotRequired=$_.PasswordNotRequired;CannotChangePassword=$_.CannotChangePassword;AccountExpirationDate=$_.AccountExpirationDate
-   SmartcardLogonRequired=$_.SmartcardLogonRequired;DoesNotRequirePreAuth=$_.DoesNotRequirePreAuth;TrustedForDelegation=$_.TrustedForDelegation
-   TrustedToAuthForDelegation=$_.TrustedToAuthForDelegation;Groups=($gn-join ' | ');PrivilegedGroups=(($pg|select -Expand Name)-join ' | ');IsPrivileged=($pg.Count -gt  0)
-   ServicePrincipalNames=(@($_.ServicePrincipalNames)-join ' | ');SID=$_.SID.Value
+   Enabled=$_.Enabled;AccountType=(AccountType $_.UserAccountControl);UserAccountControl=$_.UserAccountControl
+   DistinguishedName=$_.DistinguishedName;CanonicalName=$_.CanonicalName;Description=$_.Description;Department=$_.Department;Title=$_.Title;Company=$_.Company;EmailAddress=$_.Mail;EmployeeId=$_.EmployeeID
+   Created=$_.Created;Modified=$_.Modified;LastLogonDate=$_.LastLogonDate;LastLogonTimestamp=$_.LastLogonTimestamp
+   LastBadPasswordAttempt=$_.LastBadPasswordAttempt;BadLogonCount=$_.BadLogonCount;BadPwdCount=$_.BadPwdCount;LockedOut=$_.LockedOut
+   PasswordLastSet=$_.PasswordLastSet;PasswordExpired=$_.PasswordExpired;PasswordNeverExpires=$_.PasswordNeverExpires;PasswordNotRequired=$_.PasswordNotRequired
+   CannotChangePassword=$_.CannotChangePassword;AccountExpirationDate=$_.AccountExpirationDate;SmartcardLogonRequired=$_.SmartcardLogonRequired
+   DoesNotRequirePreAuth=$_.DoesNotRequirePreAuth;TrustedForDelegation=$_.TrustedForDelegation;TrustedToAuthForDelegation=$_.TrustedToAuthForDelegation
+   Groups=($gn -join ' | ');PrivilegedGroups=(($priv|Select-Object -ExpandProperty Name)-join ' | ');IsPrivileged=($priv.Count -gt 0)
+   ServicePrincipalNames=(@($_.ServicePrincipalNames)-join ' | ');SID=$_.SID.Value;LinkedGPOs=($linkedGPOs -join ' | ')
   }
- });$Script:Results.Users=$x;Ok ($x.Count.ToString()+' utilisateurs audites.')
+ })
+ $Script:Results.Users=$x
+ Ok ($x.Count.ToString()+' utilisateurs audites.')
 }
+
 function AuditGroups{
  Section 'Audit des groupes';$priv=PrivGroups
  $x=@(Get-ADGroup @ADParams -Filter * -Properties *|%{
@@ -146,41 +171,53 @@ function AuditAdminSDHolder{
 function AuditGPOAnalysis{
  Section 'Analyse GPO';if(-not(Cmd Get-GPOReport)){Warn 'Get-GPOReport indisponible.';return};$rows=@();foreach($g in @(Get-GPO -All @ADParams)){try{[xml]$xml=Get-GPOReport -Guid $g.Id -ReportType Xml;$t=$xml.OuterXml;$f=@();if($t-match '(?i)EnableLUA.*false|FilterAdministratorToken.*false'){$f+='UAC weakening'};if($t-match '(?i)fDenyTSConnections.*0|Terminal Services'){$f+='RDP'};if($t-match '(?i)SMB1|LanmanServer.*SMB1'){$f+='SMB legacy'};if($t-match '(?i)DisableRealtimeMonitoring|DisableAntiSpyware'){$f+='Defender'};if($t-match '(?i)SeDebugPrivilege|SeTakeOwnershipPrivilege|SeBackupPrivilege'){$f+='Privileges sensibles'};if($f.Count){Finding Medium GPO ('Configuration sensible: '+$g.DisplayName) $g.DisplayName ($f-join ', ') 'Revoir la configuration.'};$rows+=[pscustomobject]@{Id=$g.Id.Guid;DisplayName=$g.DisplayName;Status=$g.GpoStatus;Flags=($f-join ' | ');Owner=$g.Owner;Created=$g.CreationTime;Modified=$g.ModificationTime}}catch{Warn ('GPO: '+$g.DisplayName+' / '+$_.Exception.Message)}};$Script:Results.GPOAnalysis=$rows;Ok ($rows.Count.ToString()+' GPO analysees.')
 }
-function GetRiskLevel([int]$score){if($score -ge 75){'Critical'}elseif($score -ge 50){'High'}elseif($score -ge 25){'Medium'}elseif($score -gt 0){'Low'}else{'None'}}
-function GetAuditSummary{
- $f=@($Script:Findings);$sum=($f|Measure-Object Score -Sum).Sum;if($null -eq $sum){$sum=0};$score=[int]$sum;if($score -gt 100){$score=100};if($score -lt 0){$score=0}
- $sev=[ordered]@{};foreach($s in @('Critical','High','Medium','Low','Info')){$sev[$s]=@($f|? Severity -eq $s).Count}
- $recs=@($f|? Recommendation|Group-Object Recommendation|Sort-Object Count -Descending|Select-Object -First 10|%{[pscustomobject]@{Recommendation=$_.Name;FindingCount=$_.Count}})
- [pscustomobject]@{RiskScore=$score;RiskLevel=(GetRiskLevel $score);FindingCount=$f.Count;BySeverity=$sev;TopRecommendations=$recs}
-}
 function ExportResults{
- New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null;$domain=$null;try{$domain=(Get-ADDomain @ADParams).DNSRoot}catch{}
- $summary=GetAuditSummary
- $obj=[ordered]@{Tool='AD Advanced Audit';Version=$Script:AuditVersion;StartedAt=$Script:StartedAt;FinishedAt=Get-Date;Domain=$domain;DomainController=$DomainController;ReadOnly=$true;RiskScore=$summary.RiskScore;RiskLevel=$summary.RiskLevel;Summary=$summary;Modules=@($Script:Results.Keys);Findings=@($Script:Findings);Results=$Script:Results}
- if($ExportFormat -in @('JSON','Both')){$file=Join-Path $OutputPath 'AD-Audit.json';$obj|ConvertTo-Json -Depth 15|Set-Content $file -Encoding UTF8;Ok ('Export JSON: '+$file)}
- if($ExportFormat -in @('HTML','Both')){
-  $htmlFile=Join-Path $OutputPath 'AD-Audit.html';$rows=($Script:Findings|Sort-Object @{Expression='Score';Descending=$true}|%{ '<tr><td>'+[System.Net.WebUtility]::HtmlEncode($_.Severity)+'</td><td>'+[System.Net.WebUtility]::HtmlEncode([string]$_.Score)+'</td><td>'+[System.Net.WebUtility]::HtmlEncode($_.Category)+'</td><td>'+[System.Net.WebUtility]::HtmlEncode($_.Title)+'</td><td>'+[System.Net.WebUtility]::HtmlEncode($_.Object)+'</td><td>'+[System.Net.WebUtility]::HtmlEncode($_.Details)+'</td><td>'+[System.Net.WebUtility]::HtmlEncode($_.Recommendation)+'</td></tr>' })-join [Environment]::NewLine
-  $css='body{font-family:Segoe UI,Arial;margin:32px;background:#f5f6f8;color:#222}table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:8px;border:1px solid #ddd;text-align:left;vertical-align:top}th{background:#222;color:#fff}.score{font-size:28px;font-weight:bold}'
-  $html='<!doctype html><html><head><meta charset="utf-8"><title>AD Advanced Audit</title><style>'+$css+'</style></head><body><h1>AD Advanced Audit</h1><h2>Risk score: '+$summary.RiskScore+'/100 — '+$summary.RiskLevel+'</h2><p>Findings: '+$summary.FindingCount+'</p><table><thead><tr><th>Severity</th><th>Score</th><th>Category</th><th>Title</th><th>Object</th><th>Details</th><th>Recommendation</th></tr></thead><tbody>'+$rows+'</tbody></table></body></html>'
-  Set-Content -Path $htmlFile -Value $html -Encoding UTF8;Ok ('Export HTML: '+$htmlFile)
+ New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
+ $domain=$null
+ try{$domain=(Get-ADDomain @ADParams).DNSRoot}catch{}
+ $obj=[ordered]@{
+  Tool='AD Advanced Audit';Version=$Script:AuditVersion;StartedAt=$Script:StartedAt;FinishedAt=Get-Date
+  Domain=$domain;DomainController=$DomainController;ReadOnly=$true
+  Modules=@($Script:Results.Keys);Findings=@($Script:Findings);Results=$Script:Results
  }
-}function SelectModules{
+ if($ExportFormat -in @('JSON','Both')){
+  $file=Join-Path $OutputPath 'AD-Audit.json'
+  $obj|ConvertTo-Json -Depth 20|Set-Content -Path $file -Encoding UTF8
+  Ok ('Export JSON: '+$file)
+ }
+ if($ExportFormat -in @('HTML','Both')){
+  $htmlFile=Join-Path $OutputPath 'AD-Audit.html'
+  $json=$obj|ConvertTo-Json -Depth 20
+  $safe=[System.Net.WebUtility]::HtmlEncode($json)
+  $html='<!doctype html><html><head><meta charset="utf-8"><title>AD Advanced Audit</title></head><body><h1>AD Advanced Audit</h1><p>Domaine: '+[System.Net.WebUtility]::HtmlEncode([string]$domain)+'</p><h2>Donnees JSON</h2><pre>'+ $safe +'</pre></body></html>'
+  Set-Content -Path $htmlFile -Value $html -Encoding UTF8
+  Ok ('Export HTML: '+$htmlFile)
+ }
+}
+function SelectModules{
  Section 'Selection des modules'
  $k=@($ModuleDefinitions.Keys)
- for($i=0;$i -lt  $k.Count;$i++){W(('[{0,2}] {1,-12} {2}'-f($i+1),$k[$i],$ModuleDefinitions[$k[$i]]))}
+ for($i=0;$i -lt $k.Count;$i++){
+  W(('[{0,2}] {1,-18} {2}' -f ($i+1),$k[$i],$ModuleDefinitions[$k[$i]]))
+ }
+ W ''
  W '[A] Tout auditer'
- $a=Read-Host 'Selection (ex: 1,2,5 ou A)'
- if([string]::IsNullOrWhiteSpace($a)){return @()}
- if($a.Trim().ToUpper() -eq 'A'){return $k}
- $selected=New-Object System.Collections.Generic.List[string]
- foreach($part in $a.Split(',')){
+ W '[Q] Quitter'
+ $answer=Read-Host 'Votre choix (ex: 1,2,5 ou A)'
+ $Script:SelectedModules=New-Object System.Collections.Generic.List[string]
+ if([string]::IsNullOrWhiteSpace($answer)){return}
+ if($answer.Trim().ToUpper() -eq 'A'){
+  foreach($name in $k){[void]$Script:SelectedModules.Add([string]$name)}
+  return
+ }
+ if($answer.Trim().ToUpper() -eq 'Q'){return}
+ foreach($part in $answer.Split(',')){
   $value=$part.Trim()
   if($value -match '^\d+$'){
    $idx=([int]$value)-1
-   if($idx -ge 0 -and $idx -lt $k.Count){[void]$selected.Add([string]$k[$idx])}
+   if($idx -ge 0 -and $idx -lt $k.Count){[void]$Script:SelectedModules.Add([string]$k[$idx])}
   }
  }
- return @($selected|Select-Object -Unique)
 }
 function Run($n){
  $names=@($n)
@@ -194,20 +231,19 @@ function Run($n){
 Section ('AD Advanced Audit v'+$Script:AuditVersion)
 if(-not(Cmd Get-ADDomain)){throw 'Le module ActiveDirectory est requis (RSAT).'}
 
-$SelectedModules=@()
+$Script:SelectedModules=New-Object System.Collections.Generic.List[string]
 if($PSBoundParameters.ContainsKey('Modules') -and $null -ne $Modules -and @($Modules).Count -gt 0){
- $SelectedModules=@($Modules|?{$_ -and $ModuleDefinitions.Contains($_)})
+ foreach($name in @($Modules)){
+  if($null -ne $name -and $ModuleDefinitions.Contains([string]$name)){[void]$Script:SelectedModules.Add([string]$name)}
+ }
 }elseif($Mode -eq 'All'){
- $SelectedModules=@($ModuleDefinitions.Keys)
+ foreach($name in @($ModuleDefinitions.Keys)){[void]$Script:SelectedModules.Add([string]$name)}
 }else{
- $SelectedModules=@(SelectModules)
+ SelectModules
 }
-if($SelectedModules.Count -eq 0){throw 'Aucun module selectionne.'}
+if($Script:SelectedModules.Count -eq 0){throw 'Aucun module selectionne.'}
 New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null
-foreach($m in @($SelectedModules)){
- if($null -eq $m){continue}
- $moduleName=[string]$m
- if([string]::IsNullOrWhiteSpace($moduleName)){continue}
+foreach($moduleName in @($Script:SelectedModules)){
  try{Run $moduleName}catch{Warn ('Module '+$moduleName+' en erreur: '+$_.Exception.Message);Finding High Engine ('Echec du module '+$moduleName) $moduleName $_.Exception.Message 'Verifier les droits, RSAT et la connectivite.'}
 }
-ExportResults;Section 'Fin de l audit';W ('Modules: '+($Script:Results.Keys-join ', '));W ('Findings: '+$Script:Findings.Count);$s=GetAuditSummary;W ('Risk score: '+$s.RiskScore+'/100 ('+$s.RiskLevel+')');W ('Repertoire: '+$OutputPath)
+ExportResults;Section 'Fin de l audit';W ('Modules: '+($Script:Results.Keys-join ', '));W ('Findings: '+$Script:Findings.Count);W ('Repertoire: '+$OutputPath)
