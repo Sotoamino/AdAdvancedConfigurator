@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.4.0';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.5.0';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie';Security='Collecte sécurité approfondie'
@@ -126,7 +126,7 @@ function AuditUsers{
  if($dcs.Count -eq 0 -and $DomainController){$dcs=@($DomainController)}
  if($dcs.Count -eq 0){try{$dcs=@((Get-ADDomain @ADParams).PDCEmulator)}catch{}}
 
- $x=@(Get-ADUser @ADParams -Filter * -Properties *,msDS-User-Account-Control-Computed|ForEach-Object{
+ $x=@(Get-ADUser @ADParams -Filter * -Properties *,msDS-User-Account-Control-Computed,adminCount,sIDHistory,altSecurityIdentities,'msDS-KeyCredentialLink',userCertificate,'msDS-SupportedEncryptionTypes','msDS-AllowedToDelegateTo','msDS-AllowedToActOnBehalfOfOtherIdentity',userWorkstations,logonHours,logonCount,lastLogon,lastLogoff,msDS-LastSuccessfulInteractiveLogonTime,msDS-LastFailedInteractiveLogonTime,msDS-FailedInteractiveLogonCount,msDS-Primary-Computer,msDS-Secondary-Computer|ForEach-Object{
   $u=$_
   $uac=[int64]$u.UserAccountControl
   $uacComputed=0
@@ -139,6 +139,22 @@ function AuditUsers{
   $priv=@($g|Where-Object {$_.Name -in (PrivGroups)})
   $linkedGPOs=Get-UserLinkedGPOs $u.DistinguishedName
   $accurateLogon=Get-UserLastLogonAccurate $u.DistinguishedName $dcs
+  $sidHistory=@($u.sIDHistory)
+  $altIdentities=@($u.altSecurityIdentities)
+  $keyCredentials=@($u.'msDS-KeyCredentialLink')
+  $userCertificates=@($u.userCertificate)
+  $delegationTargets=@($u.'msDS-AllowedToDelegateTo')
+  $rbcd=$null -ne $u.'msDS-AllowedToActOnBehalfOfOtherIdentity'
+  $adminCount=($null -ne $u.adminCount -and [int]$u.adminCount -eq 1)
+  $spns=@($u.ServicePrincipalName)
+  $securityFlags=New-Object System.Collections.Generic.List[string]
+  if($adminCount){[void]$securityFlags.Add('AdminCount')};if($spns.Count -gt 0){[void]$securityFlags.Add('SPN')}
+  if($delegationTargets.Count -gt 0){[void]$securityFlags.Add('ConstrainedDelegation')};if($u.TrustedForDelegation){[void]$securityFlags.Add('UnconstrainedDelegation')}
+  if($u.TrustedToAuthForDelegation){[void]$securityFlags.Add('ProtocolTransition')};if($rbcd){[void]$securityFlags.Add('RBCD')}
+  if($sidHistory.Count -gt 0){[void]$securityFlags.Add('SIDHistory')};if($altIdentities.Count -gt 0){[void]$securityFlags.Add('AltSecurityIdentities')}
+  if($keyCredentials.Count -gt 0){[void]$securityFlags.Add('KeyCredentialLink')};if($userCertificates.Count -gt 0){[void]$securityFlags.Add('UserCertificate')}
+  if(($uac -band 32) -ne 0){[void]$securityFlags.Add('PasswordNotRequired')};if(($uac -band 64) -ne 0){[void]$securityFlags.Add('CannotChangePassword')}
+  if(($uac -band 65536) -ne 0){[void]$securityFlags.Add('PasswordNeverExpires')};if(($uac -band 4194304) -ne 0){[void]$securityFlags.Add('NoKerberosPreAuth')}
 
   [pscustomobject]@{
    SamAccountName=$u.SamAccountName;UserPrincipalName=$u.UserPrincipalName;Name=$u.Name;GivenName=$u.GivenName;Initials=$u.Initials;MiddleName=$u.MiddleName;Surname=$u.Surname;DisplayName=$u.DisplayName
@@ -158,6 +174,15 @@ function AuditUsers{
    PasswordLastSet=$u.PasswordLastSet;PwdLastSetRaw=$u.pwdLastSet;PasswordNeverExpires=$u.PasswordNeverExpires;PasswordNotRequired=$u.PasswordNotRequired;CannotChangePassword=$u.CannotChangePassword
    AccountExpirationDate=$u.AccountExpirationDate;AccountExpiresRaw=$u.accountExpires;SmartcardLogonRequired=$u.SmartcardLogonRequired
    DoesNotRequirePreAuth=$u.DoesNotRequirePreAuth;TrustedForDelegation=$u.TrustedForDelegation;TrustedToAuthForDelegation=$u.TrustedToAuthForDelegation
+   AdminCount=$u.adminCount;IsAdminCountProtected=$adminCount;SecurityFlags=($securityFlags -join ' | ')
+   SIDHistoryPresent=($sidHistory.Count -gt 0);SIDHistoryCount=$sidHistory.Count;SIDHistory=($sidHistory -join ' | ')
+   AltSecurityIdentitiesPresent=($altIdentities.Count -gt 0);AltSecurityIdentities=($altIdentities -join ' | ')
+   KeyCredentialLinkPresent=($keyCredentials.Count -gt 0);KeyCredentialLinkCount=$keyCredentials.Count
+   UserCertificatePresent=($userCertificates.Count -gt 0);UserCertificateCount=$userCertificates.Count
+   SupportedEncryptionTypes=$u.'msDS-SupportedEncryptionTypes';ConstrainedDelegationTargets=($delegationTargets -join ' | ');RBCDConfigured=$rbcd
+   UserWorkstations=$u.userWorkstations;LogonHoursPresent=($null -ne $u.logonHours);LogonCount=$u.logonCount;LastLogoff=$u.lastLogoff
+   LastSuccessfulInteractiveLogon=$u.'msDS-LastSuccessfulInteractiveLogonTime';LastFailedInteractiveLogon=$u.'msDS-LastFailedInteractiveLogonTime';FailedInteractiveLogonCount=$u.'msDS-FailedInteractiveLogonCount'
+   PrimaryComputer=$u.'msDS-Primary-Computer';SecondaryComputer=$u.'msDS-Secondary-Computer'
    HomePhone=$u.HomePhone;Fax=$u.Fax;Info=$u.Info;WebPage=$u.wWWHomePage
    PrimaryGroupID=$u.PrimaryGroupID;MemberOf=(@($u.MemberOf)-join ' | ')
    Groups=($gn -join ' | ');GroupCount=$gn.Count;PrivilegedGroups=(($priv|Select-Object -ExpandProperty Name)-join ' | ');PrivilegedGroupCount=$priv.Count;IsPrivileged=($priv.Count -gt 0)
