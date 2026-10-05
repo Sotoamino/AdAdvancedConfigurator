@@ -11,7 +11,7 @@ param(
 # StrictMode intentionally disabled: the audit must remain compatible with Windows PowerShell 5.1 collections and optional AD attributes.
 $ErrorActionPreference='Stop'
 $ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
-$Script:AuditVersion='1.3.0';$Script:StartedAt=Get-Date
+$Script:AuditVersion='1.3.1';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
  Users='Comptes utilisateurs';Groups='Groupes et privileges';Computers='Ordinateurs';OUs='Unites organisationnelles';GPOs='GPO et analyse';Domain='Domaine et politiques';DCs='Controleurs de domaine';Sites='Sites et replication';Trusts='Relations de confiance';DNS='DNS';Delegation='Delegations ACL';SPNs='SPN';LAPS='LAPS';Health='Sante AD';Privileged='Privileges';Kerberos='Kerberos';PasswordPolicies='FGPP';Schema='Schema AD';ADCS='AD CS / PKI';RecycleBin='Corbeille AD';AdminSDHolder='AdminSDHolder';GPOAnalysis='Analyse GPO approfondie'
@@ -309,7 +309,7 @@ function ExportResults{
   if($ExportFormat -eq 'JSON' -or $ExportFormat -eq 'Both'){
    $file=Join-Path $OutputPath 'AD-Audit.json'
    $json=ConvertTo-Json -InputObject $report -Depth 10
-   [System.IO.File]::WriteAllText($file,$json,(New-Object System.Text.UTF8Encoding($false)))
+   [System.IO.File]::WriteAllText($file,$json,(New-Object System.Text.UTF8Encoding))
    Ok ('Export JSON: '+$file)
   }
   if($ExportFormat -eq 'HTML' -or $ExportFormat -eq 'Both'){
