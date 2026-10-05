@@ -4,7 +4,7 @@ Framework PowerShell d'audit et d'analyse approfondie d'Active Directory.
 
 ## Garantie
 
-Le script est concu en **lecture seule** : aucune creation, modification ou suppression d'objet AD, GPO, DNS, ACL, compte ou groupe. Un seul fichier de sortie maximum est produit par execution : `AD-Audit.json` (ou `AD-Audit.html` si HTML est choisi).
+Le script est concu en **lecture seule** : aucune creation, modification ou suppression d'objet AD, GPO, DNS, ACL, compte ou groupe. Les seules écritures locales sont les fichiers d'export explicitement demandés (`AD-Audit.json`, `AD-Audit.html`, ou les deux). Aucun fichier GPO intermédiaire n'est créé.
 
 ## Modules
 
