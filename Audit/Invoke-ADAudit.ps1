@@ -63,6 +63,23 @@ function Get-UserLinkedGPOs([string]$UserDN){
  return @($result|Select-Object -Unique)
 }
 
+function Get-ADUserRawAttributes($User){
+ $raw=[ordered]@{}
+ foreach($p in $User.PSObject.Properties){
+  try{
+   $v=$p.Value
+   if($null -eq $v){continue}
+   if($v -is [System.Collections.IEnumerable] -and -not ($v -is [string])){
+    $items=@($v|ForEach-Object {[string]$_})
+    if($items.Count -gt 0){$raw[$p.Name]=$items}
+   }else{
+    $raw[$p.Name]=$v
+   }
+  }catch{}
+ }
+ $raw
+}
+
 function Get-UserLastLogonAccurate([string]$UserDN,[object[]]$DomainControllers){
  $bestDate=$null;$bestDC=$null;$bestRaw=0
  foreach($dc in @($DomainControllers)){
@@ -123,7 +140,7 @@ function AuditUsers{
    Groups=($gn -join ' | ');GroupCount=$gn.Count;PrivilegedGroups=(($priv|Select-Object -ExpandProperty Name)-join ' | ');PrivilegedGroupCount=$priv.Count;IsPrivileged=($priv.Count -gt 0)
    ServicePrincipalNames=(@($u.ServicePrincipalNames)-join ' | ');SPNCount=@($u.ServicePrincipalNames).Count
    LinkedGPOs=($linkedGPOs -join ' | ');LinkedGPOCount=$linkedGPOs.Count
-   DistinguishedNameParent=($u.DistinguishedName -replace '^CN=[^,]+,','')
+   DistinguishedNameParent=($u.DistinguishedName -replace '^CN=[^,]+,','');RawADAttributes=(Get-ADUserRawAttributes $u)
   }
  })
  $Script:Results.Users=$x
@@ -233,6 +250,8 @@ function ExportResults{
   Add-Member -InputObject $report -MemberType NoteProperty -Name FinishedAt -Value ([string](Get-Date))
   Add-Member -InputObject $report -MemberType NoteProperty -Name Domain -Value $domainName
   Add-Member -InputObject $report -MemberType NoteProperty -Name ReadOnly -Value $true
+  Add-Member -InputObject $report -MemberType NoteProperty -Name SelectedModules -Value @($Script:SelectedModules)
+  Add-Member -InputObject $report -MemberType NoteProperty -Name Findings -Value @($Script:Findings)
   Add-Member -InputObject $report -MemberType NoteProperty -Name Results -Value $Script:Results
   New-Item -ItemType Directory -Path $OutputPath -Force -ErrorAction Stop|Out-Null
   if($ExportFormat -eq 'JSON' -or $ExportFormat -eq 'Both'){
