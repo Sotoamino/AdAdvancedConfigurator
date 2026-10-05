@@ -10,7 +10,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-$ADParams=ADParams
+$ADParams=@{}; if($DomainController){$ADParams.Server=$DomainController}
 $Script:AuditVersion='1.0.0';$Script:StartedAt=Get-Date
 $Script:Results=[ordered]@{};$Script:Findings=New-Object System.Collections.Generic.List[object]
 $ModuleDefinitions=[ordered]@{
